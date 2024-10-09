@@ -1,0 +1,53 @@
+# Ignore test script (if only for local development)
+test.py
+
+# Ignore temporary or development folders
+trash/
+
+# Ignore virtual environment folders
+venv/
+
+# Ignore Python bytecode files and cache directories
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+
+# Ignore egg and build metadata
+*.egg-info/
+build/
+dist/
+
+# Ignore log files
+*.log
+
+# Ignore cache directories
+.cache/
+
+# Ignore data files
+*.h5
+*.pth
+*.pt
+*.zip
+*.tar.gz
+*.wav
+*.mp3
+*.npy
+*.pkl
+
+# Ignore large or temporary files
+*.tmp
+*.bak
+*.old
+*.bin
+
+# Ignore IDE-specific files
+.vscode/
+.idea/
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore temporary folders
+temp/
