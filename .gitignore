@@ -1,11 +1,12 @@
 # Ignore test script (if only for local development)
-test.py
+test*.py
 
 # Ignore temporary or development folders
 trash/
 
 # Ignore virtual environment folders
 venv/
+venv10/
 
 # Ignore Python bytecode files and cache directories
 __pycache__/
@@ -17,7 +18,8 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-
+*.spec
+w
 # Ignore log files
 *.log
 
@@ -44,10 +46,11 @@ dist/
 # Ignore IDE-specific files
 .vscode/
 .idea/
+.vs/
 
 # Ignore OS-specific files
 .DS_Store
 Thumbs.db
 
 # Ignore temporary folders
-temp/
+temp/venv10/

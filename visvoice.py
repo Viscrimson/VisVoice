@@ -1,10 +1,10 @@
-from managers.Queue_manager import QueueManager
-from managers.UI_manager import UIManager
+# visvoice.py
+
+from managers.uimanager import UIManager
 
 def main():
-    queue_manager = QueueManager()
-    ui_manager = UIManager(queue_manager)
-    ui_manager.run()
+    app = UIManager()
+    app.run()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
