@@ -14,6 +14,9 @@ import asyncio
 import sys
 import configparser
 
+# Import keyboard for global hotkey functionality
+import keyboard
+
 class UIManager:
     def __init__(self):
         self.root = tk.Tk()
@@ -31,14 +34,15 @@ class UIManager:
         self.voice = None
         self.engine = None
         self.language = 'en-US'  # Default language
+        self.hotkey = '`'  # Default hotkey
 
-        # Input and Output options
-        self.input_options = {'Voice Input': False, 'Text Input': True}
+        # Output options
         self.output_options = {'Voice Output': True, 'Chatbox Output': True}
 
         # Flag to control the main loop
         self.running = True  # Ensure this is initialized before starting threads
         self.voice_capture_active = False  # To control voice capture
+        self.is_typing = False  # Flag to detect typing
 
         self.load_settings()
         self.create_widgets()
@@ -49,6 +53,13 @@ class UIManager:
 
         # Start the voice input loop thread
         threading.Thread(target=self.voice_input_loop, daemon=True).start()
+
+        # Set up hotkey listener
+        self.setup_hotkey_listener()
+
+        # Bind events to detect typing
+        self.root.bind_all('<KeyPress>', self.on_key_press)
+        self.root.bind_all('<KeyRelease>', self.on_key_release)
 
     def load_settings(self):
         """Loads settings from settings.ini or sets defaults."""
@@ -64,10 +75,9 @@ class UIManager:
             self.voice_engine = settings.get('voice_engine', 'pyttsx3')
             self.voice = settings.get('voice', None)
             self.language = settings.get('language', 'en-US')
+            self.hotkey = settings.get('hotkey', '`')
 
-            # Input and Output options
-            self.input_options['Voice Input'] = settings.getboolean('voice_input', False)
-            self.input_options['Text Input'] = settings.getboolean('text_input', True)
+            # Output options
             self.output_options['Voice Output'] = settings.getboolean('voice_output', True)
             self.output_options['Chatbox Output'] = settings.getboolean('chatbox_output', True)
         else:
@@ -86,8 +96,7 @@ class UIManager:
             'voice_engine': self.voice_engine,
             'voice': self.voice or '',
             'language': self.language,
-            'voice_input': str(self.input_options['Voice Input']),
-            'text_input': str(self.input_options['Text Input']),
+            'hotkey': self.hotkey,
             'voice_output': str(self.output_options['Voice Output']),
             'chatbox_output': str(self.output_options['Chatbox Output']),
         }
@@ -167,14 +176,14 @@ class UIManager:
 
     def get_current_settings_text(self):
         """Returns a string representing the current important settings."""
-        input_methods = ', '.join([key for key, value in self.input_options.items() if value])
         output_methods = ', '.join([key for key, value in self.output_options.items() if value])
         settings_text = (
             f"Input Device: {self.input_device}\n"
             f"Output Device: {self.output_device}\n"
             f"Voice Engine: {self.voice_engine}\n"
+            f"Voice: {self.voice}\n"  # Added voice name
             f"Language: {self.language}\n"
-            f"Input Methods: {input_methods}\n"
+            f"Hotkey: {self.hotkey}\n"
             f"Output Methods: {output_methods}\n"
             f"Chatbox IP: {self.chatbox_ip}, Port: {self.chatbox_port}"
         )
@@ -257,20 +266,31 @@ class UIManager:
             self.toggle_voice_button.config(text='Start Voice Capture')
             logging.info('Voice capture stopped.')
 
+    def setup_hotkey_listener(self):
+        """Sets up the hotkey listener for toggling voice capture."""
+        try:
+            keyboard.add_hotkey(self.hotkey, self.toggle_voice_capture)
+            logging.info(f'Hotkey "{self.hotkey}" registered for toggling voice capture.')
+        except Exception as e:
+            logging.error(f'Error setting up hotkey: {e}')
+
+    def on_key_press(self, event):
+        self.is_typing = True
+
+    def on_key_release(self, event):
+        self.is_typing = False
+
     def voice_input_loop(self):
         """Continuously listens for voice input if activated."""
         while self.running:
-            if self.voice_capture_active:
+            if self.voice_capture_active and not self.is_typing:
                 text = self.input_manager.get_voice_input()
-                if text and self.input_options.get('Text Input', False):
-                    # Insert the transcribed text into the textbox
-                    self.textbox.insert(tk.END, text + '\n')
+                if text:
+                    # Insert transcribed text into the textbox
+                    self.textbox.insert(tk.END, text + ' ')
                     logging.info(f'Transcribed text inserted into textbox: {text}')
-                elif text:
-                    # If Text Input is disabled, process the text directly
-                    self.process_text(text)
             else:
-                # If voice capture is not active, sleep briefly
+                # If voice capture is not active or user is typing, sleep briefly
                 time.sleep(0.1)
 
     def process_text(self, text):
@@ -281,18 +301,40 @@ class UIManager:
         threading.Thread(target=self.output_chunks, args=(chunks,), daemon=True).start()
 
     def split_text(self, text, max_length):
-        """Splits text into chunks not exceeding max_length characters."""
-        words = text.split()
+        """Splits text into chunks not exceeding max_length characters, ending on a full sentence or word."""
+        import re
+
+        # Use regular expressions to split text into sentences
+        sentence_endings = re.compile(r'(?<=[.!?])\s+')
+        sentences = sentence_endings.split(text)
+
         chunks = []
         current_chunk = ''
-        for word in words:
-            if len(current_chunk) + len(word) + 1 <= max_length:
-                current_chunk += ' ' + word if current_chunk else word
+
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) + 1 <= max_length:
+                current_chunk += (' ' + sentence) if current_chunk else sentence
             else:
-                chunks.append(current_chunk)
-                current_chunk = word
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                if len(sentence) <= max_length:
+                    current_chunk = sentence
+                else:
+                    # Split long sentence into smaller chunks
+                    words = sentence.split()
+                    current_sentence_chunk = ''
+                    for word in words:
+                        if len(current_sentence_chunk) + len(word) + 1 <= max_length:
+                            current_sentence_chunk += (' ' + word) if current_sentence_chunk else word
+                        else:
+                            chunks.append(current_sentence_chunk.strip())
+                            current_sentence_chunk = word
+                    if current_sentence_chunk:
+                        current_chunk = current_sentence_chunk
+                    else:
+                        current_chunk = ''
         if current_chunk:
-            chunks.append(current_chunk)
+            chunks.append(current_chunk.strip())
         return chunks
 
     def output_chunks(self, chunks):
@@ -304,8 +346,8 @@ class UIManager:
             # Send to chatbox if enabled
             if self.output_options.get('Chatbox Output', False):
                 self.output_manager.send_to_chatbox(chunk)
-            # Wait before processing next chunk
-            time.sleep(1)  # Adjust as needed
+            # Wait for 10 seconds before processing next chunk
+            time.sleep(10)
 
     def show_settings(self):
         """Displays the settings window."""
@@ -313,19 +355,6 @@ class UIManager:
         self.settings_window.title("Settings")
 
         row = 0
-
-        # Input Options
-        ttk.Label(self.settings_window, text='Input Options:', font=('Arial', 10, 'bold')).grid(row=row, column=0, padx=5, pady=5, sticky='W')
-        row += 1
-
-        self.voice_input_var = tk.BooleanVar(value=self.input_options.get('Voice Input', False))
-        voice_input_cb = ttk.Checkbutton(self.settings_window, text='Voice Input', variable=self.voice_input_var)
-        voice_input_cb.grid(row=row, column=0, padx=5, pady=2, sticky='W')
-
-        self.text_input_var = tk.BooleanVar(value=self.input_options.get('Text Input', True))
-        text_input_cb = ttk.Checkbutton(self.settings_window, text='Text Input', variable=self.text_input_var)
-        text_input_cb.grid(row=row, column=1, padx=5, pady=2, sticky='W')
-        row += 1
 
         # Output Options
         ttk.Label(self.settings_window, text='Output Options:', font=('Arial', 10, 'bold')).grid(row=row, column=0, padx=5, pady=5, sticky='W')
@@ -344,33 +373,33 @@ class UIManager:
         ttk.Label(self.settings_window, text='Input Audio Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         input_devices = self.get_audio_devices(input=True)
         self.input_device_var = tk.StringVar(value=self.input_device)
-        ttk.Combobox(self.settings_window, textvariable=self.input_device_var, values=input_devices).grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Combobox(self.settings_window, textvariable=self.input_device_var, values=input_devices, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
         # Output Audio Device
         ttk.Label(self.settings_window, text='Output Audio Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         output_devices = self.get_audio_devices(output=True)
         self.output_device_var = tk.StringVar(value=self.output_device)
-        ttk.Combobox(self.settings_window, textvariable=self.output_device_var, values=output_devices).grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Combobox(self.settings_window, textvariable=self.output_device_var, values=output_devices, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
         # Chatbox IP
         ttk.Label(self.settings_window, text='Chatbox IP:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         self.chatbox_ip_var = tk.StringVar(value=self.chatbox_ip)
-        ttk.Entry(self.settings_window, textvariable=self.chatbox_ip_var).grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Entry(self.settings_window, textvariable=self.chatbox_ip_var, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
         # Chatbox Port
         ttk.Label(self.settings_window, text='Chatbox Port:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         self.chatbox_port_var = tk.IntVar(value=self.chatbox_port)
-        ttk.Entry(self.settings_window, textvariable=self.chatbox_port_var).grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Entry(self.settings_window, textvariable=self.chatbox_port_var, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
         # Voice Engine
         ttk.Label(self.settings_window, text='Voice Engine:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         voice_engines = ['pyttsx3', 'edge-tts']
         self.voice_engine_var = tk.StringVar(value=self.voice_engine)
-        voice_engine_combobox = ttk.Combobox(self.settings_window, textvariable=self.voice_engine_var, values=voice_engines, state='readonly')
+        voice_engine_combobox = ttk.Combobox(self.settings_window, textvariable=self.voice_engine_var, values=voice_engines, state='readonly', width=50)
         voice_engine_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
         self.voice_engine_var.trace('w', self.update_voice_options)
         row += 1
@@ -379,7 +408,7 @@ class UIManager:
         ttk.Label(self.settings_window, text='Language:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         languages = self.get_available_languages()
         self.language_var = tk.StringVar(value=self.language)
-        language_combobox = ttk.Combobox(self.settings_window, textvariable=self.language_var, values=languages, state='readonly')
+        language_combobox = ttk.Combobox(self.settings_window, textvariable=self.language_var, values=languages, state='readonly', width=50)
         language_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
         self.language_var.trace('w', self.update_voice_options)
         row += 1
@@ -387,9 +416,15 @@ class UIManager:
         # Voice Options
         ttk.Label(self.settings_window, text='Voice:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         self.voice_var = tk.StringVar(value=self.voice)
-        self.voice_combobox = ttk.Combobox(self.settings_window, textvariable=self.voice_var)
+        self.voice_combobox = ttk.Combobox(self.settings_window, textvariable=self.voice_var, width=50)
         self.voice_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
         self.update_voice_options()
+        row += 1
+
+        # Hotkey Setting
+        ttk.Label(self.settings_window, text='Hotkey:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        self.hotkey_var = tk.StringVar(value=self.hotkey)
+        ttk.Entry(self.settings_window, textvariable=self.hotkey_var, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
         # Save and Cancel Buttons
@@ -450,30 +485,33 @@ class UIManager:
         import pyttsx3
         self.engine = pyttsx3.init()
         voices = self.engine.getProperty('voices')
-        voice_names = [voice.id for voice in voices]
+        voice_names = [f"{voice.id} - {voice.name}" for voice in voices]
+        self.pyttsx3_voice_dict = {f"{voice.id} - {voice.name}": voice.id for voice in voices}
         return voice_names
 
     def get_edge_tts_voices(self):
-        """Synchronously retrieves edge-tts voices for the selected language."""
+        """Retrieves edge-tts voices filtered by the selected language."""
         voices = []
         self.edge_voice_dict = {}
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            all_voices = loop.run_until_complete(self.get_all_edge_tts_voices_async())
-            loop.close()
-            # Filter voices by selected language
+            all_voices = self.get_all_edge_tts_voices()
             selected_language = self.language_var.get()
-            voices = [voice for voice in all_voices if voice['Locale'] == selected_language]
-            # Create display names and mapping
+            # Filter voices by selected language
+            filtered_voices = [voice for voice in all_voices if voice['Locale'] == selected_language]
+            if not filtered_voices:
+                logging.warning(f"No voices found for language: {selected_language}")
+                return []
             voice_names = []
-            for voice in voices:
-                display_name = f"{voice['ShortName']} - {voice['LocalName']}"
+            for voice in filtered_voices:
+                # Safely access 'LocalName' or fall back to other names
+                local_name = voice.get('LocalName') or voice.get('FriendlyName') or voice.get('ShortName')
+                display_name = f"{voice['ShortName']} - {local_name} ({voice['Locale']})"
                 voice_names.append(display_name)
                 self.edge_voice_dict[display_name] = voice['ShortName']
+            voices = voice_names
         except Exception as e:
             logging.error(f"Error retrieving edge-tts voices: {e}")
-        return voice_names
+        return voices
 
     def get_all_edge_tts_voices(self):
         """Returns a list of all available voices for edge-tts."""
@@ -514,10 +552,9 @@ class UIManager:
         self.voice_engine = self.voice_engine_var.get()
         self.voice = self.voice_var.get()
         self.language = self.language_var.get()
+        self.hotkey = self.hotkey_var.get()
 
-        # Input and Output options
-        self.input_options['Voice Input'] = self.voice_input_var.get()
-        self.input_options['Text Input'] = self.text_input_var.get()
+        # Output options
         self.output_options['Voice Output'] = self.voice_output_var.get()
         self.output_options['Chatbox Output'] = self.chatbox_output_var.get()
 
@@ -525,6 +562,8 @@ class UIManager:
         sd.default.device = (input_device_index, output_device_index)
         if self.voice_engine == 'edge-tts':
             self.voice = self.edge_voice_dict.get(self.voice, self.voice)
+        elif self.voice_engine == 'pyttsx3':
+            self.voice = self.pyttsx3_voice_dict.get(self.voice, self.voice)
         self.output_manager.update_settings(
             chatbox_ip=self.chatbox_ip,
             chatbox_port=self.chatbox_port,
@@ -534,16 +573,12 @@ class UIManager:
         # Update the current settings label
         self.update_current_settings_label()
 
+        # Update hotkey
+        keyboard.unhook_all_hotkeys()
+        self.setup_hotkey_listener()
+
         # Save settings to file
         self.save_settings_to_file()
-
-        # Restart voice input thread if necessary
-        if self.input_options.get('Voice Input', False):
-            self.voice_capture_active = True
-            self.toggle_voice_button.config(text='Stop Voice Capture')
-        else:
-            self.voice_capture_active = False
-            self.toggle_voice_button.config(text='Start Voice Capture')
 
         logging.info('Settings have been saved.')
         self.settings_window.destroy()
@@ -555,6 +590,8 @@ class UIManager:
     def on_closing(self):
         """Handles actions when the window is closed."""
         self.running = False
+        self.output_manager.stop_audio()  # Ensure audio is stopped
+        keyboard.unhook_all()
         self.root.destroy()
         sys.exit(0)
 

@@ -6,7 +6,6 @@ trash/
 
 # Ignore virtual environment folders
 venv/
-venv10/
 
 # Ignore Python bytecode files and cache directories
 __pycache__/
