@@ -17,8 +17,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-*.spec
-w
+
 # Ignore log files
 *.log
 

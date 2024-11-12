@@ -1,24 +1,40 @@
-# inputmanager.py
+# managers/inputmanager.py
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 import logging
-import whisper  # This imports the correct 'whisper' module from 'openai-whisper'
+import whisper
 import sounddevice as sd
 import numpy as np
 import torch
 import webrtcvad
 import collections
 import sys
+import os
+
+# Add resource_path function
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 class InputManager:
     def __init__(self):
         logging.info("Loading Whisper model...")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = whisper.load_model("base", device=self.device)
-        logging.info(f"Whisper model loaded on {self.device}.")
+
+        # Load the 'small' model directly, downloading it if necessary
+        model_name = "small"
+        self.model = whisper.load_model(model_name, device=self.device)
+        logging.info(f"Whisper model '{model_name}' loaded on {self.device}.")
+
         self.vad = webrtcvad.Vad(2)  # Aggressiveness from 0 to 3
 
     def get_voice_input(self):

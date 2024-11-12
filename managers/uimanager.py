@@ -1,4 +1,4 @@
-# uimanager.py
+# managers/uimanager.py
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -12,10 +12,21 @@ from .outputmanager import OutputManager
 import sounddevice as sd
 import asyncio
 import sys
+import os
 import configparser
 
 # Import keyboard for global hotkey functionality
 import keyboard
+
+# Add resource_path function
+def resource_path(relative_path):
+    """Get absolute path to resource, works for dev and when using PyInstaller."""
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 class UIManager:
     def __init__(self):
@@ -40,9 +51,9 @@ class UIManager:
         self.output_options = {'Voice Output': True, 'Chatbox Output': True}
 
         # Flag to control the main loop
-        self.running = True  # Ensure this is initialized before starting threads
-        self.voice_capture_active = False  # To control voice capture
-        self.is_typing = False  # Flag to detect typing
+        self.running = True
+        self.voice_capture_active = False
+        self.is_typing = False
 
         self.load_settings()
         self.create_widgets()
@@ -64,7 +75,7 @@ class UIManager:
     def load_settings(self):
         """Loads settings from settings.ini or sets defaults."""
         config = configparser.ConfigParser()
-        config.read('settings.ini')
+        config.read(resource_path('settings.ini'))
 
         if 'Settings' in config:
             settings = config['Settings']
