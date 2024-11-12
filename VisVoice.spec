@@ -4,21 +4,14 @@
 
 block_cipher = None
 
-from PyInstaller.utils.hooks import collect_data_files
-
-# Collect data files from the spellchecker module
-spellchecker_datas = collect_data_files('spellchecker')
-
-datas = [
-    ('settings.ini', '.'),  # Include settings.ini in the root directory
-    ('resources/VisVoiceIcon.png', 'resources'),  # Include the icon file
-] + spellchecker_datas
-
 a = Analysis(
     ['visvoice.py'],
     pathex=['.'],
     binaries=[],
-    datas=datas,
+    datas=[
+        ('settings.ini', '.'),  # Include settings.ini in the root directory
+        ('resources/VisVoiceIcon.png', 'resources'),  # Include the icon file
+    ],
     hiddenimports=[
         'webrtcvad',  # Voice Activity Detection
         'collections',  # Built-in module, usually not needed but can be safe to include
