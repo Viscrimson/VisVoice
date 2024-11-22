@@ -20,6 +20,7 @@ class InputManager:
         self.model = whisper.load_model("base", device=self.device)
         logging.info(f"Whisper model loaded on {self.device}.")
         self.vad = webrtcvad.Vad(2)  # Aggressiveness from 0 to 3
+        self.stream = None
 
     def get_voice_input(self):
         logging.info("Listening for voice input with VAD...")
@@ -32,32 +33,40 @@ class InputManager:
         triggered = False
         voiced_frames = []
 
-        def generator():
-            with sd.InputStream(samplerate=sample_rate, channels=1, dtype='int16') as stream:
+        try:
+            with sd.InputStream(
+                samplerate=sample_rate,
+                channels=1,
+                dtype='int16',
+                device=sd.default.device[0],  # Explicitly use default input device
+                latency='low'
+            ) as stream:
                 while True:
                     data, overflowed = stream.read(int(sample_rate * frame_duration / 1000))
                     if overflowed:
                         logging.warning("Audio buffer overflowed")
-                    yield data.tobytes()
+                    
+                    is_speech = self.vad.is_speech(data.tobytes(), sample_rate)
+                    if not triggered:
+                        ring_buffer.append((data.tobytes(), is_speech))
+                        num_voiced = len([f for f, speech in ring_buffer if speech])
+                        if num_voiced > threshold * num_padding_frames:
+                            triggered = True
+                            voiced_frames.extend([f for f, s in ring_buffer])
+                            ring_buffer.clear()
+                    else:
+                        voiced_frames.append(data.tobytes())
+                        ring_buffer.append((data.tobytes(), is_speech))
+                        num_unvoiced = len([f for f, speech in ring_buffer if not speech])
+                        if num_unvoiced > threshold * num_padding_frames:
+                            break  # End of speech
+                    if len(voiced_frames) > sample_rate * 10:  # Limit recording to 10 seconds
+                        logging.info("Max recording duration reached.")
+                        break
 
-        for frame in generator():
-            is_speech = self.vad.is_speech(frame, sample_rate)
-            if not triggered:
-                ring_buffer.append((frame, is_speech))
-                num_voiced = len([f for f, speech in ring_buffer if speech])
-                if num_voiced > threshold * num_padding_frames:
-                    triggered = True
-                    voiced_frames.extend([f for f, s in ring_buffer])
-                    ring_buffer.clear()
-            else:
-                voiced_frames.append(frame)
-                ring_buffer.append((frame, is_speech))
-                num_unvoiced = len([f for f, speech in ring_buffer if not speech])
-                if num_unvoiced > threshold * num_padding_frames:
-                    break  # End of speech
-            if len(voiced_frames) > sample_rate * 10:  # Limit recording to 10 seconds
-                logging.info("Max recording duration reached.")
-                break
+        except Exception as e:
+            logging.error(f"Error during voice input: {e}")
+            return None
 
         if not voiced_frames:
             logging.info("No speech detected.")

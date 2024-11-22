@@ -18,7 +18,7 @@ __pycache__/
 build/
 dist/
 *.spec
-w
+
 # Ignore log files
 *.log
 
