@@ -25,17 +25,16 @@ class OutputManager:
 
     def initialize_tts_engine(self):
         if self.voice_engine == "edge-tts":
-            # Edge TTS initialization if needed
             pass
         elif self.voice_engine == "aws-polly":
             try:
-                # Initialize AWS Polly client
-                self.polly_client = boto3.client('polly')
+                # Initialize AWS Polly client with region
+                self.polly_client = boto3.client('polly', region_name='us-east-1')
                 # Test the connection
-                self.polly_client.describe_voices()
+                self.polly_client.describe_voices(LanguageCode='en-US')
+                logging.info("AWS Polly initialized successfully")
             except Exception as e:
                 logging.error(f"Failed to initialize AWS Polly: {e}")
-                # Fallback to edge-tts
                 self.voice_engine = "edge-tts"
                 logging.info("Falling back to edge-tts")
         else:

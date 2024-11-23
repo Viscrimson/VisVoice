@@ -12,13 +12,29 @@ import torch
 import webrtcvad
 import collections
 import sys
+import os
 
 class InputManager:
     def __init__(self):
         logging.info("Loading Whisper model...")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = whisper.load_model("base", device=self.device)
-        logging.info(f"Whisper model loaded on {self.device}.")
+        try:
+            # Get the base directory for the application
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+            
+            # Initialize Whisper with the correct model path
+            self.model = whisper.load_model(
+                "base", 
+                device=self.device,
+                download_root=os.path.join(base_path, "whisper", "assets")
+            )
+            logging.info(f"Whisper model loaded on {self.device}.")
+        except Exception as e:
+            logging.error(f"Failed to load Whisper model: {e}")
+            raise
         self.vad = webrtcvad.Vad(2)  # Aggressiveness from 0 to 3
         self.stream = None
 

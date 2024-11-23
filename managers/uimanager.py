@@ -24,6 +24,35 @@ class UIManager:
         self.controller = controller
         self.root = tk.Tk()
         self.root.title("Vis Voice")
+        self.spellchecker = None  # Initialize to None first
+
+        # Initialize spellchecker with correct path
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.dirname(os.path.dirname(__file__))
+
+            dict_path = os.path.join(base_path, 'resources', 'en.json')
+            if os.path.exists(dict_path):
+                logging.info(f"Loading dictionary from: {dict_path}")
+                self.spellchecker = SpellChecker(language=None)  # Initialize without language
+                with open(dict_path, 'r', encoding='utf-8') as f:
+                    word_freq = json.load(f)
+                self.spellchecker.word_frequency.load_dictionary(word_freq)  # Load the dictionary data directly
+            else:
+                logging.warning(f"Dictionary not found at: {dict_path}, creating basic dictionary")
+                self.spellchecker = SpellChecker(language=None)  # Initialize without language
+                # Create a basic dictionary
+                basic_words = {
+                    "the": 1, "be": 1, "to": 1, "of": 1, "and": 1,
+                    "a": 1, "in": 1, "that": 1, "have": 1, "i": 1
+                }
+                self.spellchecker.word_frequency.load_words(basic_words)
+        except Exception as e:
+            logging.error(f"Failed to initialize spellchecker: {e}")
+            self.spellchecker = SpellChecker(language=None)  # Fallback to empty spellchecker
+            self.spellchecker.word_frequency.load_words({})  # Initialize with empty dictionary
 
         # Initialize settings
         self.input_device = None
@@ -55,7 +84,6 @@ class UIManager:
 
         self.load_settings()
         self.create_widgets()
-        self.spellchecker = SpellChecker()
 
         # Set up hotkey listener
         self.setup_hotkey_listener()
@@ -198,6 +226,9 @@ class UIManager:
 
     def check_spelling(self, event=None):
         """Checks the spelling of the text in the textbox."""
+        if self.spellchecker is None:
+            return
+            
         self.textbox.tag_remove("misspelled", "1.0", tk.END)
         text = self.textbox.get("1.0", tk.END)
         words = re.finditer(r'\b\w+\b', text)
@@ -481,8 +512,22 @@ class UIManager:
 
     def get_aws_polly_voices(self, selected_language):
         """Returns a list of available voices for AWS Polly given a language."""
-        # ...existing code to retrieve AWS Polly voices...
-        pass
+        try:
+            polly_client = boto3.client('polly', region_name='us-east-1')
+            response = polly_client.describe_voices(LanguageCode=selected_language)
+            voices = response['Voices']
+            voice_names = []
+            self.aws_polly_voice_dict = {}
+            for voice in voices:
+                # Only include Neural voices
+                if voice['SupportedEngines'] == ['neural']:
+                    name = f"{voice['Name']} (Neural)"
+                    voice_names.append(name)
+                    self.aws_polly_voice_dict[name] = voice['Id']
+            return sorted(voice_names)
+        except Exception as e:
+            logging.error(f"Error getting AWS Polly voices: {e}")
+            return []
 
     def get_audio_devices(self, input=False, output=False):
         """Returns a list of available audio devices."""
