@@ -14,16 +14,46 @@ import asyncio
 import sys
 import configparser
 import os
+import json
 
 # Import keyboard for global hotkey functionality
 import keyboard
 import boto3  # Add AWS SDK for Python
+from PIL import Image, ImageTk
+import tempfile
 
 class UIManager:
     def __init__(self, controller):
         self.controller = controller
+        
+        # Show splash screen first
+        self.show_splash_screen()
+        
         self.root = tk.Tk()
         self.root.title("Vis Voice")
+        
+        # Set application icon - modified for better Windows support
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.dirname(os.path.dirname(__file__))
+            
+            icon_path = os.path.join(base_path, 'resources', 'VisVoiceIcon.png')
+            if os.path.exists(icon_path):
+                # Convert PNG to ICO for Windows
+                icon_image = Image.open(icon_path)
+                icon_photo = ImageTk.PhotoImage(icon_image)
+                self.root.iconphoto(True, icon_photo)  # For Linux/Mac
+                
+                # Create temporary ICO file for Windows taskbar
+                with tempfile.NamedTemporaryFile(suffix='.ico', delete=False) as tmp_ico:
+                    icon_image.save(tmp_ico.name, format='ICO')
+                    self.root.iconbitmap(default=tmp_ico.name)
+                    self.temp_icon = tmp_ico.name  # Store the path to delete later
+        except Exception as e:
+            logging.error(f"Failed to load application icon: {e}")
+
         self.spellchecker = None  # Initialize to None first
 
         # Initialize spellchecker with correct path
@@ -39,7 +69,8 @@ class UIManager:
                 self.spellchecker = SpellChecker(language=None)  # Initialize without language
                 with open(dict_path, 'r', encoding='utf-8') as f:
                     word_freq = json.load(f)
-                self.spellchecker.word_frequency.load_dictionary(word_freq)  # Load the dictionary data directly
+                # Load words into the spellchecker
+                self.spellchecker.word_frequency.load_words(word_freq.keys())
             else:
                 logging.warning(f"Dictionary not found at: {dict_path}, creating basic dictionary")
                 self.spellchecker = SpellChecker(language=None)  # Initialize without language
@@ -91,6 +122,63 @@ class UIManager:
         # Bind events to detect typing
         self.root.bind_all('<KeyPress>', self.on_key_press)
         self.root.bind_all('<KeyRelease>', self.on_key_release)
+
+    def show_splash_screen(self):
+        """Shows a splash screen that fades away after 3 seconds."""
+        splash = tk.Tk()
+        splash.overrideredirect(True)  # Remove window decorations
+        
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.dirname(os.path.dirname(__file__))
+            
+            logo_path = os.path.join(base_path, 'resources', 'VisVoiceLogo.jpeg')
+            if os.path.exists(logo_path):
+                # Load and display the image
+                image = Image.open(logo_path)
+                # You can adjust the size if needed
+                # image = image.resize((400, 300), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(image)
+                
+                # Create canvas for fade effect
+                canvas = tk.Canvas(splash, width=image.width, height=image.height, highlightthickness=0)
+                canvas.pack()
+                canvas.create_image(0, 0, anchor='nw', image=photo)
+                
+                # Center the splash screen
+                screen_width = splash.winfo_screenwidth()
+                screen_height = splash.winfo_screenheight()
+                position_x = int((screen_width - image.width) / 2)
+                position_y = int((screen_height - image.height) / 2)
+                splash.geometry(f"+{position_x}+{position_y}")
+                
+                splash.update()
+                
+                # Fade effect
+                alpha = 1.0
+                step = 0.1
+                fade_time = 3000  # 3 seconds
+                steps = int(fade_time / 100)  # 10ms per step
+                
+                def fade_out():
+                    nonlocal alpha
+                    if alpha > 0:
+                        alpha -= step
+                        splash.attributes('-alpha', max(alpha, 0))
+                        splash.after(int(fade_time/steps), fade_out)
+                    else:
+                        splash.destroy()
+                
+                # Start fade out after 2 seconds
+                splash.after(2000, fade_out)
+                splash.mainloop()
+                
+        except Exception as e:
+            logging.error(f"Failed to show splash screen: {e}")
+            if splash:
+                splash.destroy()
 
     def load_settings(self):
         """Loads settings from settings.ini or sets defaults."""

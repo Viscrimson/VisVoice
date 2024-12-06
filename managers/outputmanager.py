@@ -4,11 +4,14 @@ import logging
 import asyncio
 from pythonosc.udp_client import SimpleUDPClient
 import edge_tts
-import pygame
 import queue
 import tempfile
 import threading
 import os
+import sounddevice as sd
+import soundfile as sf
+from pydub import AudioSegment
+import numpy as np
 import boto3  # Add AWS SDK for Python (Boto3)
 
 class OutputManager:
@@ -19,8 +22,8 @@ class OutputManager:
         self.voice_engine = voice_engine
         self.voice = voice
         self.tts_queue = queue.Queue()
-        pygame.mixer.init()
         self.is_playing = False
+        self.playback_thread = None  # For managing playback thread
         self.initialize_tts_engine()
 
     def initialize_tts_engine(self):
@@ -48,9 +51,7 @@ class OutputManager:
         self.voice_engine = voice_engine
         self.voice = voice
         
-        # Re-initialize pygame mixer with new device
-        pygame.mixer.quit()
-        pygame.mixer.init()
+        # No need to re-initialize pygame.mixer
         
         if old_engine != self.voice_engine:
             self.initialize_tts_engine()
@@ -85,7 +86,9 @@ class OutputManager:
                 output_file = tmp_file.name
                 tmp_file.write(response['AudioStream'].read())
             # Play the audio
+            logging.info("Playing AWS Polly audio...")
             self.play_audio_file(output_file)
+            logging.info("AWS Polly audio playback finished.")
         except Exception as e:
             logging.error(f"Error during AWS Polly playback: {e}")
         finally:
@@ -98,51 +101,49 @@ class OutputManager:
 
     async def generate_and_play_audio_edge(self, text):
         logging.info("Generating speech with Edge TTS...")
-        # Generate a unique temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
             output_file = tmp_file.name
 
         try:
-            communicate = edge_tts.Communicate(text, voice=self.voice)
+            communicate = edge_tts.Communicate(
+                text=text, 
+                voice=self.voice
+            )
             await communicate.save(output_file)
             logging.info("Playing Edge TTS audio...")
-            self.stop_audio()  # Stop any existing playback
-            pygame.mixer.music.load(output_file)
-            pygame.mixer.music.play()
-            self.is_playing = True
-            while pygame.mixer.music.get_busy():
-                await asyncio.sleep(0.1)
+            self.play_audio_file(output_file)
             logging.info("Edge TTS audio playback finished.")
         except Exception as e:
             logging.error(f"Error during Edge TTS playback: {e}")
         finally:
-            # Ensure the audio file is unloaded before deletion
-            pygame.mixer.music.unload()
-            self.is_playing = False
-            # Clean up the temporary file
             if os.path.exists(output_file):
-                try:
-                    os.remove(output_file)
-                except Exception as e:
-                    logging.error(f"Error deleting temporary audio file: {e}")
+                os.remove(output_file)
 
     def play_audio_file(self, filepath):
-        """Plays an audio file using pygame."""
+        """Plays an audio file using sounddevice and soundfile."""
         try:
             self.stop_audio()
-            pygame.mixer.music.load(filepath)
-            pygame.mixer.music.play()
+            if filepath.endswith('.wav'):
+                data, samplerate = sf.read(filepath)
+            elif filepath.endswith('.mp3'):
+                audio = AudioSegment.from_file(filepath, format='mp3')
+                data = np.array(audio.get_array_of_samples()).astype(np.float32) / 2**15
+                samplerate = audio.frame_rate
+            else:
+                logging.error(f"Unsupported audio format: {filepath}")
+                return
             self.is_playing = True
-            while pygame.mixer.music.get_busy():
-                pygame.time.wait(100)
+            sd.play(data, samplerate)
+            sd.wait()
             self.is_playing = False
         except Exception as e:
             logging.error(f"Error playing audio file: {e}")
+            self.is_playing = False
 
     def stop_audio(self):
         """Stops audio playback."""
         if self.is_playing:
-            pygame.mixer.music.stop()
+            sd.stop()
             self.is_playing = False
 
     def send_to_chatbox(self, text):
