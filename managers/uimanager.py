@@ -85,6 +85,22 @@ class UIManager:
             self.input_device = self.get_default_input_device()
             self.output_device = self.get_default_output_device()
 
+        if 'Presets' in config:
+            # Convert all preset names to lowercase for consistency
+            self.presets = {k.lower(): v for k, v in config['Presets'].items()}
+        else:
+            # Default presets with lowercase keys
+            self.presets = {
+                'preset 1': 'ja-JP-NanamiNeural',
+                'preset 2': 'en-US-JennyNeural',
+                'preset 3': 'zh-CN-XiaoyiNeural',
+                'preset 4': 'ko-KR-SunHiNeural',
+                'preset 5': 'fr-FR-DeniseNeural',
+                'preset 6': 'de-DE-KatjaNeural',
+                'preset 7': 'es-ES-ElviraNeural',
+                'preset 8': 'it-IT-ElsaNeural',
+            }
+
     def save_settings_to_file(self):
         """Saves settings to settings.ini."""
         config = configparser.ConfigParser()
@@ -100,6 +116,9 @@ class UIManager:
             'voice_output': str(self.output_options['Voice Output']),
             'chatbox_output': str(self.output_options['Chatbox Output']),
         }
+        # Save presets with consistent case
+        config['Presets'] = {k: v for k, v in self.presets.items()}
+        
         with open('settings.ini', 'w') as configfile:
             config.write(configfile)
 
@@ -119,21 +138,6 @@ class UIManager:
 
     def create_widgets(self):
         """Creates the main UI."""
-        # Display section at the top
-        display_frame = ttk.Frame(self.root)
-        display_frame.pack(side='top', fill='x', padx=10, pady=5)
-
-        # Use labels to display settings in a structured way
-        settings_label = ttk.Label(display_frame, text="Current Settings:", font=('Arial', 10, 'bold'))
-        settings_label.pack(side='top', anchor='w')
-
-        self.current_settings_label = ttk.Label(display_frame, text=self.get_current_settings_text(), justify='left')
-        self.current_settings_label.pack(side='left', anchor='w')
-
-        # Separator
-        separator = ttk.Separator(self.root, orient='horizontal')
-        separator.pack(fill='x', padx=10, pady=5)
-
         # Textbox for typing and STT output
         text_frame = ttk.Frame(self.root)
         text_frame.pack(expand=True, fill='both', padx=10, pady=5)
@@ -143,15 +147,15 @@ class UIManager:
         self.textbox.bind('<KeyRelease>', self.check_spelling)
         self.textbox.bind('<Button-3>', self.show_suggestions)
         self.textbox.bind('<Return>', self.submit_text)
+        
         # Add vertical scrollbar
         scrollbar = ttk.Scrollbar(text_frame, command=self.textbox.yview)
         scrollbar.pack(side='right', fill='y')
         self.textbox.config(yscrollcommand=scrollbar.set)
 
-        # Buttons at the bottom
+        # Action Buttons
         button_frame = ttk.Frame(self.root)
-        button_frame.pack(side='bottom', fill='x', pady=10)
-        # Center the buttons
+        button_frame.pack(fill='x', pady=5)
         button_frame.columnconfigure(0, weight=1)
         button_frame.columnconfigure(1, weight=1)
         button_frame.columnconfigure(2, weight=1)
@@ -163,93 +167,117 @@ class UIManager:
         send_button = ttk.Button(button_frame, text='Send', command=self.submit_text)
         send_button.grid(row=0, column=1)
 
-        # Toggle Voice Capture Button
-        self.toggle_voice_button = ttk.Button(button_frame, text='Start Voice Capture', command=self.toggle_voice_capture)
+        self.toggle_voice_button = ttk.Button(button_frame, text='Start Voice Capture', 
+                                            command=self.toggle_voice_capture)
         self.toggle_voice_button.grid(row=0, column=2, sticky='w')
 
-        # Stop Audio Button
         stop_audio_button = ttk.Button(button_frame, text='Stop Audio', command=self.stop_audio)
         stop_audio_button.grid(row=0, column=3, sticky='w')
 
-        # Add settings section below the chat box
-        settings_frame = ttk.Frame(self.root)
-        settings_frame.pack(side='bottom', fill='x', padx=10, pady=5)
+        # Preset buttons section
+        preset_frame = ttk.Frame(self.root)
+        preset_frame.pack(fill='x', padx=10, pady=5)
+        
+        # Create preset grid (2 rows of 4 buttons)
+        self.preset_buttons = {}  # Store buttons for later reference
+        for i in range(8):
+            preset_name = f"Preset {i+1}"
+            voice = self.presets.get(preset_name.lower(), '')  # Use lowercase for consistency
+            btn = ttk.Button(preset_frame, text=preset_name, 
+                           command=lambda v=voice, b=preset_name: self.apply_preset(v, b))
+            row = i // 4
+            col = i % 4
+            btn.grid(row=row, column=col, padx=2, pady=2, sticky='ew')
+            btn.bind('<Button-3>', lambda e, b=btn: self.configure_preset(e, b))
+            self.preset_buttons[preset_name.lower()] = btn  # Store button reference
+        
+        # Configure grid columns to be equal width
+        for i in range(4):
+            preset_frame.columnconfigure(i, weight=1)
 
-        # Arrange settings in two columns
-        col1_frame = ttk.Frame(settings_frame)
+        # Settings Accordion
+        settings_frame = ttk.Frame(self.root)
+        settings_frame.pack(fill='x', padx=10, pady=5)
+
+        def toggle_settings():
+            if settings_content.winfo_viewable():
+                settings_content.pack_forget()
+                toggle_btn.configure(text='▼ Settings')
+            else:
+                settings_content.pack(fill='x', padx=5, pady=5)
+                toggle_btn.configure(text='▲ Settings')
+
+        toggle_btn = ttk.Button(settings_frame, text='▼ Settings', command=toggle_settings)
+        toggle_btn.pack(fill='x')
+
+        # Settings Content (initially hidden)
+        settings_content = ttk.Frame(settings_frame)
+        
+        # Create two columns for settings
+        col1_frame = ttk.Frame(settings_content)
         col1_frame.pack(side='left', fill='both', expand=True)
 
-        col2_frame = ttk.Frame(settings_frame)
+        col2_frame = ttk.Frame(settings_content)
         col2_frame.pack(side='right', fill='both', expand=True)
 
         # Column 1 Settings
-        # Output Options
         ttk.Label(col1_frame, text='Output Options:', font=('Arial', 10, 'bold')).pack(anchor='w')
         self.voice_output_var = tk.BooleanVar(value=self.output_options.get('Voice Output', True))
-        self.voice_output_var.trace('w', self.save_settings)
         ttk.Checkbutton(col1_frame, text='Voice Output', variable=self.voice_output_var).pack(anchor='w')
 
         self.chatbox_output_var = tk.BooleanVar(value=self.output_options.get('Chatbox Output', True))
-        self.chatbox_output_var.trace('w', self.save_settings)
         ttk.Checkbutton(col1_frame, text='Chatbox Output', variable=self.chatbox_output_var).pack(anchor='w')
 
-        # Input Audio Device
         ttk.Label(col1_frame, text='Input Audio Device:').pack(anchor='w')
         input_devices = self.get_audio_devices(input=True)
         self.input_device_var = tk.StringVar(value=self.input_device)
-        self.input_device_var.trace('w', self.save_settings)
         ttk.Combobox(col1_frame, textvariable=self.input_device_var, values=input_devices, width=50).pack(anchor='w')
 
-        # Output Audio Device
         ttk.Label(col1_frame, text='Output Audio Device:').pack(anchor='w')
         output_devices = self.get_audio_devices(output=True)
         self.output_device_var = tk.StringVar(value=self.output_device)
-        self.output_device_var.trace('w', self.save_settings)
         ttk.Combobox(col1_frame, textvariable=self.output_device_var, values=output_devices, width=50).pack(anchor='w')
 
-        # Hotkey Setting
         ttk.Label(col1_frame, text='Hotkey:').pack(anchor='w')
         self.hotkey_var = tk.StringVar(value=self.hotkey)
-        self.hotkey_var.trace('w', self.save_settings)
         ttk.Entry(col1_frame, textvariable=self.hotkey_var, width=50).pack(anchor='w')
 
         # Column 2 Settings
-        # Voice Engine
         ttk.Label(col2_frame, text='Voice Engine:').pack(anchor='w')
         voice_engines = ['edge-tts', 'polly']
         self.voice_engine_var = tk.StringVar(value=self.voice_engine)
         ttk.Combobox(col2_frame, textvariable=self.voice_engine_var, values=voice_engines, state='readonly', width=50).pack(anchor='w')
 
-        # Language Selection
         ttk.Label(col2_frame, text='Language:').pack(anchor='w')
         languages = self.get_available_languages()
         self.language_var = tk.StringVar(value=self.language)
         self.language_combobox = ttk.Combobox(col2_frame, textvariable=self.language_var, values=languages, state='readonly', width=50)
         self.language_combobox.pack(anchor='w')
 
-        # Voice Options
         ttk.Label(col2_frame, text='Voice:').pack(anchor='w')
         self.voice_var = tk.StringVar(value=self.voice)
         self.voice_combobox = ttk.Combobox(col2_frame, textvariable=self.voice_var, width=50)
         self.voice_combobox.pack(anchor='w')
-        self.update_voice_options()
 
-        # Chatbox IP
         ttk.Label(col2_frame, text='Chatbox IP:').pack(anchor='w')
         self.chatbox_ip_var = tk.StringVar(value=self.chatbox_ip)
         ttk.Entry(col2_frame, textvariable=self.chatbox_ip_var, width=50).pack(anchor='w')
 
-        # Chatbox Port
         ttk.Label(col2_frame, text='Chatbox Port:').pack(anchor='w')
         self.chatbox_port_var = tk.IntVar(value=self.chatbox_port)
         ttk.Entry(col2_frame, textvariable=self.chatbox_port_var, width=50).pack(anchor='w')
 
-        # Now add the trace callbacks after all variables are initialized
+        # Now add the trace callbacks
         self.voice_engine_var.trace('w', self.update_voice_options)
         self.voice_engine_var.trace('w', self.save_settings)
         self.language_var.trace('w', self.update_voice_options)
         self.language_var.trace('w', self.save_settings)
         self.voice_var.trace('w', self.save_settings)
+        self.voice_output_var.trace('w', self.save_settings)
+        self.chatbox_output_var.trace('w', self.save_settings)
+        self.input_device_var.trace('w', self.save_settings)
+        self.output_device_var.trace('w', self.save_settings)
+        self.hotkey_var.trace('w', self.save_settings)
         self.chatbox_ip_var.trace('w', self.save_settings)
         self.chatbox_port_var.trace('w', self.save_settings)
 
@@ -614,3 +642,92 @@ class UIManager:
         """Runs the main loop of the UI."""
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.mainloop()
+
+    def apply_preset(self, voice, preset_name):
+        """Applies the selected voice preset."""
+        if not voice:
+            logging.warning(f"No voice assigned to preset: {preset_name}")
+            return
+            
+        # Update voice engine first
+        self.voice_engine_var.set('edge-tts')
+        self.voice_engine = 'edge-tts'
+        
+        # Extract language from voice ID (e.g., 'ja-JP' from 'ja-JP-NanamiNeural')
+        language = '-'.join(voice.split('-')[:2])
+        self.language_var.set(language)
+        
+        # Update voice settings
+        self.update_voice_options()
+        
+        # Set the voice after options are updated
+        def set_voice_delayed():
+            voices = self.voice_combobox['values']
+            for v in voices:
+                if voice in v:  # Match if the voice ID is in the display name
+                    self.voice_var.set(v)
+                    self.save_settings()  # Save the changes
+                    break
+        
+        # Wait for language change to update voices
+        self.root.after(200, set_voice_delayed)
+
+    def configure_preset(self, event, button):
+        """Shows configuration menu for preset button."""
+        menu = tk.Menu(self.root, tearoff=0)
+        
+        # Get current voice selection
+        current_voice = self.edge_voice_dict.get(self.voice_var.get(), '')
+        
+        # Add option to set current voice as preset
+        menu.add_command(
+            label=f"Set as current voice ({current_voice})",
+            command=lambda: self.update_preset(button, current_voice)
+        )
+        
+        # Add option to rename preset
+        menu.add_command(
+            label="Rename preset",
+            command=lambda: self.rename_preset(button)
+        )
+        
+        menu.post(event.x_root, event.y_root)
+
+    def update_preset(self, button, voice):
+        """Updates the preset with the new voice."""
+        preset_name = button['text'].lower()  # Convert to lowercase
+        if voice:
+            self.presets[preset_name] = voice
+            self.save_settings_to_file()
+            logging.info(f"Updated preset '{preset_name}' to voice: {voice}")
+        else:
+            logging.warning(f"Cannot update preset '{preset_name}': No voice selected")
+
+    def rename_preset(self, button):
+        """Shows dialog to rename preset."""
+        old_name = button['text']
+        old_name_lower = old_name.lower()
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Rename Preset")
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="Enter new name:").pack(padx=5, pady=5)
+        entry = ttk.Entry(dialog)
+        entry.insert(0, old_name)
+        entry.pack(padx=5, pady=5)
+        
+        def save_rename():
+            new_name = entry.get()
+            new_name_lower = new_name.lower()
+            if new_name and new_name_lower != old_name_lower:
+                # Update presets dictionary
+                voice = self.presets.pop(old_name_lower, None)
+                if voice:
+                    self.presets[new_name_lower] = voice
+                    # Update button text
+                    button.config(text=new_name)
+                    self.save_settings_to_file()
+            dialog.destroy()
+        
+        ttk.Button(dialog, text="Save", command=save_rename).pack(pady=5)
