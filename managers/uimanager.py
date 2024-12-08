@@ -47,6 +47,8 @@ class UIManager:
         self.load_settings()
         self.create_widgets()
         self.spellchecker = SpellChecker()
+        self.spellcheck_delay = 1000  # Delay in milliseconds
+        self.spellcheck_job = None
 
         # For handling long texts
         self.max_chatbox_length = 144
@@ -301,7 +303,13 @@ class UIManager:
         self.current_settings_label.config(text=self.get_current_settings_text())
 
     def check_spelling(self, event=None):
-        """Checks the spelling of the text in the textbox."""
+        """Checks the spelling of the text in the textbox and auto-corrects obvious errors."""
+        if self.spellcheck_job:
+            self.root.after_cancel(self.spellcheck_job)
+        self.spellcheck_job = self.root.after(self.spellcheck_delay, self.perform_spellcheck)
+
+    def perform_spellcheck(self):
+        """Performs the actual spell checking and correction."""
         self.textbox.tag_remove("misspelled", "1.0", tk.END)
         text = self.textbox.get("1.0", tk.END)
         words = re.finditer(r'\b\w+\b', text)
@@ -309,10 +317,14 @@ class UIManager:
             word = word_match.group()
             if word.lower() in self.spellchecker:
                 continue
-            start_idx = f"1.0+{word_match.start()}c"
-            end_idx = f"1.0+{word_match.end()}c"
-            self.textbox.tag_add("misspelled", start_idx, end_idx)
-        self.textbox.tag_config("misspelled", foreground="red")
+            best_suggestion = self.spellchecker.correction(word.lower())
+            if best_suggestion:
+                start_idx = f"1.0+{word_match.start()}c"
+                end_idx = f"1.0+{word_match.end()}c"
+                self.textbox.delete(start_idx, end_idx)
+                self.textbox.insert(start_idx, best_suggestion)
+                self.textbox.tag_add("corrected", start_idx, f"{start_idx}+{len(best_suggestion)}c")
+        self.textbox.tag_config("corrected", foreground="blue")
 
     def show_suggestions(self, event):
         """Shows spelling suggestions for the misspelled word."""
@@ -326,10 +338,10 @@ class UIManager:
                 return
             if word.lower() in self.spellchecker:
                 return
-            suggestions = self.spellchecker.suggest(word.lower())
+            suggestions = self.spellchecker.candidates(word.lower())
             if suggestions:
                 menu = tk.Menu(self.root, tearoff=0)
-                for suggestion in suggestions[:10]:  # Limit to first 10 suggestions
+                for suggestion in sorted(suggestions)[:10]:  # Limit to first 10 suggestions
                     menu.add_command(
                         label=suggestion,
                         command=lambda s=suggestion, start=word_start, end=word_end: self.replace_word(start, end, s)
@@ -345,7 +357,7 @@ class UIManager:
         self.textbox.delete(start, end)
         self.textbox.insert(start, replacement)
         # Recheck the spelling
-        self.check_spelling()
+        self.perform_spellcheck()
 
     def submit_text(self, event=None):
         """Handles the 'Send' button click or Enter key press."""
