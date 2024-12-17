@@ -13,17 +13,42 @@ import tempfile
 import boto3  # Import boto3 for Amazon Polly
 
 class OutputManager:
-    def __init__(self, chatbox_ip="127.0.0.1", chatbox_port=9000, voice_engine="edge-tts", voice=None):
-        self.chatbox_ip = chatbox_ip
-        self.chatbox_port = chatbox_port
-        self.client = SimpleUDPClient(self.chatbox_ip, self.chatbox_port)
+    def __init__(self):
+        self.chatbox_ip = "127.0.0.1"
+        self.chatbox_port = 9000
+        self.client = None
         self.polly_client = None
-        self.voice_engine = voice_engine
-        self.voice = voice
+        self.voice_engine = "edge-tts"
+        self.voice = None
         pygame.mixer.init()
         self.is_playing = False
         self.tts_queue = queue.Queue()
-        self.initialize_tts_engine()
+        self.initialize_client()
+        
+    def setup(self, config):
+        """Configure output manager with settings from config."""
+        try:
+            settings = config['Settings']
+            self.chatbox_ip = settings.get('chatbox_ip', self.chatbox_ip)
+            self.chatbox_port = int(settings.get('chatbox_port', self.chatbox_port))
+            self.voice_engine = settings.get('voice_engine', self.voice_engine)
+            self.voice = settings.get('voice')
+            
+            # Initialize clients
+            self.client = SimpleUDPClient(self.chatbox_ip, self.chatbox_port)
+            
+            # Initialize TTS engine
+            if self.voice_engine == "edge-tts":
+                logging.info("Initializing Edge TTS")
+            elif self.voice_engine.startswith("polly"):
+                logging.info("Initializing Amazon Polly")
+                self.polly_client = boto3.client('polly', region_name='us-east-1')
+            
+            logging.info(f"Output manager configured with engine: {self.voice_engine}")
+            return True
+        except Exception as e:
+            logging.error(f"Error setting up output manager: {e}")
+            return False
 
     def initialize_tts_engine(self):
         if self.voice_engine == "edge-tts":
@@ -38,6 +63,14 @@ class OutputManager:
         self.voice_engine = voice_engine
         self.voice = voice
         self.initialize_tts_engine()
+
+    def initialize_client(self):
+        """Initialize UDP client with current settings"""
+        try:
+            self.client = SimpleUDPClient(self.chatbox_ip, self.chatbox_port)
+        except Exception as e:
+            logging.error(f"Failed to initialize UDP client: {e}")
+            self.client = None
 
     def speak_text(self, text):
         if not self.voice or not isinstance(self.voice, str):
@@ -92,11 +125,13 @@ class OutputManager:
         self.stop_audio()
         self.is_playing = True
         try:
+            # Simple voice handling - let AWS determine the best engine
             response = self.polly_client.synthesize_speech(
                 Text=text,
                 VoiceId=self.voice,
                 OutputFormat='mp3'
             )
+            
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
                 tmp_file.write(response['AudioStream'].read())
                 output_file = tmp_file.name
@@ -119,17 +154,31 @@ class OutputManager:
                     logging.error(f"Error deleting temporary audio file: {e}")
 
     def stop_audio(self):
-        """Stops audio playback."""
+        """Stops audio playback and clears the queue."""
         if self.is_playing:
             if self.voice_engine == "edge-tts":
                 pygame.mixer.music.stop()
                 pygame.mixer.music.unload()  # Unload the music to release the file
-                self.is_playing = False
             elif self.voice_engine == "polly":
                 pygame.mixer.music.stop()
                 pygame.mixer.music.unload()  # Unload the music to release the file
-                self.is_playing = False
+            self.is_playing = False
+        
+        # Clear the queue
+        while not self.tts_queue.empty():
+            try:
+                self.tts_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def send_to_chatbox(self, text):
-        logging.info(f"Sending to chatbox: {text}")
-        self.client.send_message("/chatbox/input", [text, True])
+        """Send text to chatbox with error handling"""
+        try:
+            if self.client is None:
+                self.initialize_client()
+            if self.client:
+                self.client.send_message("/chatbox/input", [text, True])
+            else:
+                logging.error("Chatbox client not initialized")
+        except Exception as e:
+            logging.error(f"Error sending to chatbox: {e}")

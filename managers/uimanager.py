@@ -19,54 +19,179 @@ import keyboard
 
 class UIManager:
     def __init__(self):
+        # Initialize window
         self.root = tk.Tk()
         self.root.title("Vis Voice")
+        self.setup_window_geometry()
 
+        # Initialize managers
         self.input_manager = InputManager()
         self.output_manager = OutputManager()
 
-        # Initialize settings
+        # Initialize variables and settings
+        self.init_variables()
+        self.load_settings()
+        
+        # Create UI elements
+        self.create_widgets()
+        self.apply_dark_mode()
+        
+        # Initialize additional features
+        self.setup_spellchecker()
+        self.setup_voice_capture()
+        self.setup_hotkey_listener()
+        self.is_speaking = False  # Add this new variable
+
+    def setup_window_geometry(self):
+        """Configure the main window geometry"""
+        window_width = 800
+        window_height = 600
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+    def init_variables(self):
+        """Initialize all variables needed for the UI"""
+        # Settings variables
         self.input_device = None
         self.output_device = None
         self.chatbox_ip = '127.0.0.1'
         self.chatbox_port = 9000
-        self.voice_engine = 'polly'
+        self.voice_engine = 'edge-tts'
         self.voice = None
-        self.engine = None
-        self.language = 'en-US'  # Default language
-        self.hotkey = '`'  # Default hotkey
-
-        # Output options
+        self.language = 'en-US'
+        self.hotkey = '`'
+        
+        # State variables
+        self.running = True
+        self.voice_capture_active = False
+        self.is_typing = False
         self.output_options = {'Voice Output': True, 'Chatbox Output': True}
-
-        # Flag to control the main loop
-        self.running = True  # Ensure this is initialized before starting threads
-        self.voice_capture_active = False  # To control voice capture
-        self.is_typing = False  # Flag to detect typing
-
-        self.load_settings()
-        self.create_widgets()
-        self.spellchecker = SpellChecker()
-        self.spellcheck_delay = 1000  # Delay in milliseconds
-        self.spellcheck_job = None
-
-        # For handling long texts
         self.max_chatbox_length = 144
 
-        # Start the voice input loop thread
+    def setup_spellchecker(self):
+        """Initialize spellchecker"""
+        self.spellchecker = SpellChecker()
+        self.spellcheck_delay = 1000
+        self.spellcheck_job = None
+
+    def setup_voice_capture(self):
+        """Setup voice capture thread"""
         threading.Thread(target=self.voice_input_loop, daemon=True).start()
 
-        # Set up hotkey listener
-        self.setup_hotkey_listener()
+    def apply_initial_settings(self):
+        """Apply initial settings after UI is loaded"""
+        # Set voice engine first
+        self.voice_engine_var.set(self.voice_engine)
+        
+        # Update language options based on engine
+        self.update_language_options()
+        
+        # Set language
+        if self.language:
+            self.language_var.set(self.language)
+        
+        # Update voice options based on language
+        self.update_voice_options()
+        
+        # Set voice if available
+        if self.voice:
+            # Find matching voice in combobox values
+            for voice_option in self.voice_combobox['values']:
+                if self.voice in voice_option:
+                    self.voice_var.set(voice_option)
+                    break
 
-        # Bind events to detect typing
-        self.root.bind_all('<KeyPress>', self.on_key_press)
-        self.root.bind_all('<KeyRelease>', self.on_key_release)
+    def apply_dark_mode(self):
+        """Apply dark mode theme"""
+        style = ttk.Style()
+        
+        # Define colors
+        dark_bg = "#2e2e2e"       # Main background
+        dark_fg = "#ffffff"        # Main text color
+        darker_bg = "#1e1e1e"     # Darker background
+        highlight_bg = "#3e3e3e"   # Highlight color
+        button_bg = "#c0c0c0"      # Light gray for buttons
+        button_fg = "#000000"      # Black text for buttons
+        dropdown_bg = "#ffffff"     # White background for dropdowns
+        dropdown_fg = "#000000"     # Black text for dropdowns
+        entry_bg = "#ffffff"        # White background for entry fields
+        entry_fg = "#000000"        # Black text for entry fields
+        
+        # Configure base style
+        style.configure(".", 
+            background=dark_bg,
+            foreground=dark_fg,
+            fieldbackground=darker_bg
+        )
+        
+        # Configure specific elements
+        style.configure("TButton", 
+            background=button_bg,
+            foreground=button_fg,
+            padding=5
+        )
+        
+        style.map("TButton",
+            background=[("active", "#d0d0d0")],  # Lighter gray when pressed
+            foreground=[("active", "#000000")]   # Keep text black when pressed
+        )
+        
+        style.configure("TEntry", 
+            fieldbackground=entry_bg,
+            foreground=entry_fg
+        )
+        
+        style.configure("TCombobox", 
+            fieldbackground=dropdown_bg,
+            foreground=dropdown_fg,
+            selectbackground=highlight_bg,
+            selectforeground=dark_fg,
+            background=dropdown_bg
+        )
+        
+        style.map("TCombobox",
+            fieldbackground=[("readonly", dropdown_bg)],
+            foreground=[("readonly", dropdown_fg)],
+            selectbackground=[("readonly", highlight_bg)],
+            selectforeground=[("readonly", dark_fg)]
+        )
+        
+        # Make dropdown list readable
+        self.root.option_add('*TCombobox*Listbox.background', dropdown_bg)
+        self.root.option_add('*TCombobox*Listbox.foreground', dropdown_fg)
+        self.root.option_add('*TCombobox*Listbox.selectBackground', highlight_bg)
+        self.root.option_add('*TCombobox*Listbox.selectForeground', dark_fg)
+        
+        # Configure text area
+        self.textbox.configure(
+            bg=darker_bg,
+            fg=dark_fg,
+            insertbackground=dark_fg,
+            selectbackground=highlight_bg,
+            selectforeground=dark_fg
+        )
+        
+        # Configure checkbuttons
+        style.configure("TCheckbutton",
+            background=dark_bg,
+            foreground=dark_fg
+        )
+        
+        style.map("TCheckbutton",
+            background=[("active", dark_bg)],
+            foreground=[("active", dark_fg)]
+        )
+        
+        # Configure the root window
+        self.root.configure(bg=dark_bg)
 
     def load_settings(self):
-        """Loads settings from settings.ini or sets defaults."""
+        """Loads settings from config.ini or sets defaults."""
         config = configparser.ConfigParser()
-        config.read('settings.ini')
+        config.read('config.ini')  # Changed from settings.ini to config.ini
 
         if 'Settings' in config:
             settings = config['Settings']
@@ -74,8 +199,8 @@ class UIManager:
             self.output_device = settings.get('output_device', self.get_default_output_device())
             self.chatbox_ip = settings.get('chatbox_ip', '127.0.0.1')
             self.chatbox_port = settings.getint('chatbox_port', 9000)
-            self.voice_engine = settings.get('voice_engine', 'polly')
-            self.voice = settings.get('voice', None)
+            self.voice_engine = settings.get('voice_engine', 'edge-tts')  # Changed default to edge-tts
+            self.voice = settings.get('voice')
             self.language = settings.get('language', 'en-US')
             self.hotkey = settings.get('hotkey', '`')
 
@@ -88,23 +213,23 @@ class UIManager:
             self.output_device = self.get_default_output_device()
 
         if 'Presets' in config:
-            # Convert all preset names to lowercase for consistency
-            self.presets = {k.lower(): v for k, v in config['Presets'].items()}
+            # Store presets exactly as they appear in config
+            self.presets = dict(config['Presets'])
         else:
-            # Default presets with lowercase keys
+            # Default presets with consistent naming
             self.presets = {
-                'preset 1': 'ja-JP-NanamiNeural',
-                'preset 2': 'en-US-JennyNeural',
-                'preset 3': 'zh-CN-XiaoyiNeural',
-                'preset 4': 'ko-KR-SunHiNeural',
-                'preset 5': 'fr-FR-DeniseNeural',
-                'preset 6': 'de-DE-KatjaNeural',
-                'preset 7': 'es-ES-ElviraNeural',
-                'preset 8': 'it-IT-ElsaNeural',
+                'preset 1': 'edge-tts|en-GB-SoniaNeural',
+                'preset 2': 'edge-tts|en-GB-MaisieNeural',
+                'preset 3': 'edge-tts|en-AU-NatashaNeural',
+                'preset 4': 'edge-tts|en-US-EmmaMultilingualNeural',
+                'preset 5': 'polly|Salli|standard',
+                'preset 6': 'polly|Ivy|neural',
+                'preset 7': 'polly|Amy|neural',
+                'preset 8': 'polly|Brian|neural'
             }
 
     def save_settings_to_file(self):
-        """Saves settings to settings.ini."""
+        """Saves settings to config.ini."""
         config = configparser.ConfigParser()
         config['Settings'] = {
             'input_device': self.input_device,
@@ -118,11 +243,14 @@ class UIManager:
             'voice_output': str(self.output_options['Voice Output']),
             'chatbox_output': str(self.output_options['Chatbox Output']),
         }
-        # Save presets with consistent case
-        config['Presets'] = {k: v for k, v in self.presets.items()}
         
-        with open('settings.ini', 'w') as configfile:
+        # Save presets
+        config['Presets'] = self.presets
+        
+        with open('config.ini', 'w') as configfile:
             config.write(configfile)
+            
+        logging.info('Settings saved to config.ini')
 
     def get_default_input_device(self):
         """Gets the default input device."""
@@ -175,6 +303,9 @@ class UIManager:
 
         stop_audio_button = ttk.Button(button_frame, text='Stop Audio', command=self.stop_audio)
         stop_audio_button.grid(row=0, column=3, sticky='w')
+        
+        # Add spacebar binding for stop audio
+        self.root.bind('<space>', self.handle_spacebar)
 
         # Preset buttons section
         preset_frame = ttk.Frame(self.root)
@@ -183,9 +314,9 @@ class UIManager:
         # Create preset grid (2 rows of 4 buttons)
         self.preset_buttons = {}  # Store buttons for later reference
         for i in range(8):
-            preset_name = f"Preset {i+1}"
-            voice = self.presets.get(preset_name.lower(), '')  # Use lowercase for consistency
-            btn = ttk.Button(preset_frame, text=preset_name, 
+            preset_name = f"preset {i+1}"  # Changed from "Preset" to "preset " to match config
+            voice = self.presets.get(preset_name, '')  # Removed .lower() since we'll maintain case consistency
+            btn = ttk.Button(preset_frame, text=preset_name.title(), 
                            command=lambda v=voice, b=preset_name: self.apply_preset(v, b))
             row = i // 4
             col = i % 4
@@ -458,7 +589,10 @@ class UIManager:
 
     def output_chunks(self, chunks):
         """Outputs text chunks via TTS and sends to chatbox."""
+        self.is_speaking = True
         for chunk in chunks:
+            if not self.running or not self.is_speaking:  # Check if we should stop
+                break
             # Output via TTS if enabled
             if self.output_options.get('Voice Output', False):
                 self.output_manager.speak_text(chunk)
@@ -466,7 +600,9 @@ class UIManager:
             if self.output_options.get('Chatbox Output', False):
                 self.output_manager.send_to_chatbox(chunk)
             # Wait for 10 seconds before processing next chunk
-            time.sleep(10)
+            if self.is_speaking:  # Only wait if we haven't stopped
+                time.sleep(10)
+        self.is_speaking = False
 
     def save_settings(self, *args):
         """Saves the settings when any setting is changed."""
@@ -569,10 +705,12 @@ class UIManager:
         selected_engine = self.voice_engine_var.get()
         if selected_engine == 'edge-tts':
             try:
+                # Define English locales
+                english_locales = ['en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IE', 'en-IN', 'en-NZ']
                 voices = self.get_all_edge_tts_voices()
                 languages = set()
                 for voice in voices:
-                    if 'Locale' in voice:  # Ensure the key exists
+                    if 'Locale' in voice and voice['Locale'] in english_locales:
                         languages.add(voice['Locale'])
                 return sorted(languages)
             except Exception as e:
@@ -587,22 +725,44 @@ class UIManager:
         """Returns a list of available languages for Amazon Polly."""
         import boto3
         polly_client = boto3.client('polly')
-        response = polly_client.describe_voices()
-        languages = {voice['LanguageCode'] for voice in response['Voices']}
+        
+        # Get languages from all engine types
+        all_voices = []
+        for engine in ['standard', 'neural', 'generative']:
+            try:
+                response = polly_client.describe_voices(Engine=engine)
+                all_voices.extend(response['Voices'])
+            except:
+                continue
+
+        # Filter for English languages only
+        languages = {voice['LanguageCode'] for voice in all_voices 
+                    if voice['LanguageCode'].startswith('en-')}
         return sorted(languages)
 
     def get_polly_voices(self):
         """Returns a list of available voices for Amazon Polly."""
         import boto3
         polly_client = boto3.client('polly')
-        response = polly_client.describe_voices(LanguageCode=self.language_var.get())
-        voices = []
-        self.polly_voice_dict = {}
-        for voice in response['Voices']:
-            display_name = f"{voice['Name']} ({voice['Id']})"
-            voices.append(display_name)
-            self.polly_voice_dict[display_name] = voice['Id']
-        return voices
+        
+        try:
+            voices = polly_client.describe_voices()['Voices']
+            # Filter for English voices only
+            english_voices = [voice for voice in voices if voice['LanguageCode'].startswith('en-')]
+            
+            # Sort and format voice names
+            voice_names = []
+            self.polly_voice_dict = {}
+            
+            for voice in english_voices:
+                display_name = f"{voice['Name']}"
+                voice_names.append(display_name)
+                self.polly_voice_dict[display_name] = voice['Id']
+            
+            return sorted(voice_names)
+        except Exception as e:
+            logging.error(f"Error getting Polly voices: {e}")
+            return []
 
     def get_all_edge_tts_voices(self):
         """Returns a list of all available voice dictionaries for edge-tts."""
@@ -639,8 +799,9 @@ class UIManager:
             return []
 
     def stop_audio(self):
-        """Stops audio playback."""
-        self.output_manager.stop_audio()
+        """Stops audio playback and clears the queue."""
+        self.is_speaking = False  # Stop future chunks from processing
+        self.output_manager.stop_audio()  # Stop current audio
 
     def on_closing(self):
         """Handles actions when the window is closed."""
@@ -660,29 +821,115 @@ class UIManager:
         if not voice:
             logging.warning(f"No voice assigned to preset: {preset_name}")
             return
+
+        try:
+            # Split preset into engine and voice_id
+            if '|' not in voice:
+                logging.error(f"Invalid preset format: {voice}")
+                return
+                
+            engine, voice_id = voice.split('|')
             
-        # Update voice engine first
-        self.voice_engine_var.set('edge-tts')
-        self.voice_engine = 'edge-tts'
+            # Update voice engine first
+            self.voice_engine_var.set(engine)
+            
+            # Different handling for Edge TTS and Polly
+            if engine == 'edge-tts':
+                # Edge TTS format: "en-US-JennyNeural" -> "en-US"
+                language = '-'.join(voice_id.split('-')[:2])
+                self.language_var.set(language)
+                # Wait for voice list to update
+                self.root.after(100, lambda: self.set_edge_voice(voice_id))
+            elif engine.startswith('polly'):
+                # Polly format is simpler, just the voice name
+                self.root.after(100, lambda: self.set_polly_voice(voice_id))
+            
+        except Exception as e:
+            logging.error(f"Error applying preset: {e}")
+
+    def set_edge_voice(self, voice_id):
+        """Set Edge TTS voice after options are updated"""
+        self.update_voice_options()  # Refresh voice list
+        voices = self.voice_combobox['values']
+        for voice in voices:
+            if voice_id in voice:
+                self.voice_var.set(voice)
+                self.save_settings()
+                break
+
+    def set_polly_voice(self, voice_id):
+        """Set Polly voice after options are updated"""
+        self.update_voice_options()  # Refresh voice list
+        voices = self.voice_combobox['values']
+        for voice in voices:
+            if voice_id in voice:
+                self.voice_var.set(voice)
+                self.save_settings()
+                break
+
+    def update_preset(self, button, voice):
+        """Updates the preset with the new voice."""
+        preset_name = button['text'].lower()  # Convert display text to lowercase for consistency
+        current_engine = self.voice_engine_var.get()
         
-        # Extract language from voice ID (e.g., 'ja-JP' from 'ja-JP-NanamiNeural')
-        language = '-'.join(voice.split('-')[:2])
-        self.language_var.set(language)
+        # Get current voice ID based on engine
+        voice_id = None
+        if current_engine == 'edge-tts':
+            voice_id = self.edge_voice_dict.get(self.voice_var.get(), '')
+            if voice_id:
+                self.presets[preset_name] = f"{current_engine}|{voice_id}"
+        elif current_engine == 'polly':
+            voice_id = self.polly_voice_dict.get(self.voice_var.get(), '')
+            if voice_id:
+                self.presets[preset_name] = f"{current_engine}|{voice_id}"
         
-        # Update voice settings
-        self.update_voice_options()
+        if voice_id:
+            self.save_settings_to_file()
+            logging.info(f"Updated preset '{preset_name}' to {self.presets[preset_name]}")
+        else:
+            logging.warning(f"Cannot update preset '{preset_name}': No voice selected")
+
+    def apply_preset(self, voice, preset_name):
+        """Applies the selected voice preset."""
+        if not voice:
+            logging.warning(f"No voice assigned to preset: {preset_name}")
+            return
         
-        # Set the voice after options are updated
-        def set_voice_delayed():
-            voices = self.voice_combobox['values']
-            for v in voices:
-                if voice in v:  # Match if the voice ID is in the display name
-                    self.voice_var.set(v)
-                    self.save_settings()  # Save the changes
-                    break
-        
-        # Wait for language change to update voices
-        self.root.after(200, set_voice_delayed)
+        try:
+            engine, voice_id = voice.split('|')
+            
+            # Update voice engine
+            self.voice_engine_var.set(engine)
+            
+            # Update language based on voice ID
+            language = self.get_language_from_voice_id(voice_id, engine)
+            if language:
+                self.language_var.set(language)
+            
+            # Wait for voice options to update
+            self.root.after(100, lambda: self.set_voice_delayed(voice_id))
+            
+        except ValueError:
+            logging.error(f"Invalid preset format: {voice}")
+
+    def get_language_from_voice_id(self, voice_id, engine):
+        """Extract language code from voice ID based on engine"""
+        if engine == 'edge-tts':
+            # Edge TTS format: "en-US-JennyNeural" -> "en-US"
+            return '-'.join(voice_id.split('-')[:2])
+        elif engine.startswith('polly'):
+            # Polly format might be different, implement as needed
+            return self.get_polly_language_for_voice(voice_id)
+        return None
+
+    def set_voice_delayed(self, voice_id):
+        """Set voice after options are updated"""
+        voices = self.voice_combobox['values']
+        for voice in voices:
+            if voice_id in voice:
+                self.voice_var.set(voice)
+                self.save_settings()
+                break
 
     def configure_preset(self, event, button):
         """Shows configuration menu for preset button."""
@@ -707,11 +954,20 @@ class UIManager:
 
     def update_preset(self, button, voice):
         """Updates the preset with the new voice."""
-        preset_name = button['text'].lower()  # Convert to lowercase
-        if voice:
-            self.presets[preset_name] = voice
+        preset_name = button['text'].lower()
+        current_engine = self.voice_engine_var.get()
+        
+        # Get current voice ID based on engine
+        if current_engine == 'edge-tts':
+            voice_id = self.edge_voice_dict.get(self.voice_var.get(), '')
+        else:  # polly
+            voice_id = self.polly_voice_dict.get(self.voice_var.get(), '')
+        
+        if voice_id:
+            # Save in format "engine|voice_id"
+            self.presets[preset_name] = f"{current_engine}|{voice_id}"
             self.save_settings_to_file()
-            logging.info(f"Updated preset '{preset_name}' to voice: {voice}")
+            logging.info(f"Updated preset '{preset_name}' to {current_engine}|{voice_id}")
         else:
             logging.warning(f"Cannot update preset '{preset_name}': No voice selected")
 
@@ -742,4 +998,14 @@ class UIManager:
                     self.save_settings_to_file()
             dialog.destroy()
         
+        
         ttk.Button(dialog, text="Save", command=save_rename).pack(pady=5)
+
+        ttk.Button(dialog, text="Save", command=save_rename).pack(pady=5)
+
+    def handle_spacebar(self, event=None):
+        """Handle spacebar press only when audio is playing"""
+        if self.is_speaking:
+            self.stop_audio()
+            return 'break'  # Prevent default spacebar behavior
+        return None  # Allow normal spacebar behavior
