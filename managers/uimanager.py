@@ -17,6 +17,47 @@ import configparser
 # Import keyboard for global hotkey functionality
 import keyboard
 
+# Engine Names and Types
+ENGINES = {
+    'Edge TTS': 'Microsoft Edge TTS',
+    'Polly Standard': 'Amazon Polly (Standard)',
+    'Polly Neural': 'Amazon Polly (Neural)',
+    'Polly Long-Form': 'Amazon Polly (Long-Form NTTS)'
+}
+
+# English Language Codes
+ENGLISH_VARIANTS = {
+    'Edge TTS': ['en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IN'],
+    'Polly Standard': ['en-US', 'en-GB', 'en-AU', 'en-IN'],
+    'Polly Neural': ['en-US', 'en-GB'],
+    'Polly Long-Form': ['en-US']
+}
+
+# Voice Mappings
+EDGE_VOICES = {
+    'en-US': ['Jenny', 'Guy', 'Ana', 'Christopher', 'Eric', 'Michelle', 'Roger', 'Steffan'],
+    'en-GB': ['Ryan', 'Sonia', 'Nancy', 'LibbyNeural'],
+    'en-AU': ['Natasha', 'William'],
+    'en-CA': ['Clara', 'Liam'],
+    'en-IN': ['Neerja', 'Prabhat']
+}
+
+POLLY_STANDARD_VOICES = {
+    'en-US': ['Joanna', 'Ivy', 'Kendra', 'Kimberly', 'Salli', 'Joey', 'Justin', 'Matthew'],
+    'en-GB': ['Amy', 'Emma', 'Brian'],
+    'en-AU': ['Russell', 'Nicole'],
+    'en-IN': ['Aditi', 'Raveena']
+}
+
+POLLY_NEURAL_VOICES = {
+    'en-US': ['Joanna-Neural', 'Ivy-Neural', 'Kendra-Neural', 'Kevin-Neural', 'Matthew-Neural'],
+    'en-GB': ['Amy-Neural', 'Emma-Neural', 'Brian-Neural']
+}
+
+POLLY_LONGFORM_VOICES = {
+    'en-US': ['Joanna-Neural-Long', 'Matthew-Neural-Long']
+}
+
 class UIManager:
     def __init__(self):
         # Initialize window
@@ -28,8 +69,10 @@ class UIManager:
         self.input_manager = InputManager()
         self.output_manager = OutputManager()
 
-        # Initialize variables and settings
-        self.init_variables()
+        # Initialize all variables first
+        self.init_variables()  # This needs to run before load_settings()
+        
+        # Load settings after variables are initialized
         self.load_settings()
         
         # Create UI elements
@@ -40,17 +83,7 @@ class UIManager:
         self.setup_spellchecker()
         self.setup_voice_capture()
         self.setup_hotkey_listener()
-        self.is_speaking = False  # Add this new variable
-
-    def setup_window_geometry(self):
-        """Configure the main window geometry"""
-        window_width = 800
-        window_height = 600
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        self.is_speaking = False
 
     def init_variables(self):
         """Initialize all variables needed for the UI"""
@@ -64,12 +97,125 @@ class UIManager:
         self.language = 'en-US'
         self.hotkey = '`'
         
+        # Initialize output options dictionary
+        self.output_options = {
+            'Voice Output': True,
+            'Chatbox Output': True
+        }
+        
         # State variables
         self.running = True
         self.voice_capture_active = False
         self.is_typing = False
-        self.output_options = {'Voice Output': True, 'Chatbox Output': True}
         self.max_chatbox_length = 144
+        self.is_speaking = False
+
+        # Voice engine variables
+        self.voice_engine_var = tk.StringVar(value=list(ENGINES.keys())[0])
+        self.language_var = tk.StringVar()
+        self.voice_var = tk.StringVar()
+        
+        # Device variables
+        self.output_device_var = tk.StringVar()
+        self.input_device_var = tk.StringVar()
+        
+        # UI variables
+        self.chatbox_ip_var = tk.StringVar(value=self.chatbox_ip)
+        self.chatbox_port_var = tk.IntVar(value=self.chatbox_port)
+        self.hotkey_var = tk.StringVar(value=self.hotkey)
+        self.voice_output_var = tk.BooleanVar(value=self.output_options['Voice Output'])
+        self.chatbox_output_var = tk.BooleanVar(value=self.output_options['Chatbox Output'])
+
+        # Initialize empty presets dictionary
+        self.presets = {}
+
+    def create_widgets(self):
+        # Main frame
+        self.main_frame = ttk.Frame(self.root, padding="10")
+        self.main_frame.pack(fill='both', expand=True)
+
+        # Settings frame
+        self.settings_frame = ttk.LabelFrame(self.main_frame, text="Settings")
+        self.settings_frame.pack(fill='x', padx=5, pady=5)
+
+        # Chatbox IP input
+        ttk.Label(self.settings_frame, text="Chatbox IP:").pack(side='left', padx=5)
+        self.chatbox_ip_entry = ttk.Entry(
+            self.settings_frame, 
+            textvariable=self.chatbox_ip_var,
+            width=20
+        )
+        self.chatbox_ip_entry.pack(side='left', padx=5)
+
+        # Voice settings
+        self.create_voice_settings()
+        
+        # Add presets frame
+        presets_frame = ttk.LabelFrame(self.main_frame, text="Voice Presets")
+        presets_frame.pack(fill='x', padx=5, pady=5)
+        
+        # Add preset buttons
+        for preset_name in self.presets:
+            self.create_preset_button(presets_frame, preset_name)
+
+    def create_voice_settings(self):
+        voice_frame = ttk.LabelFrame(self.main_frame, text="Voice Settings")
+        voice_frame.pack(fill='x', padx=5, pady=5)
+
+        # Engine selection
+        ttk.Label(voice_frame, text="Engine:").pack(anchor='w', padx=5)
+        self.engine_combo = ttk.Combobox(
+            voice_frame,
+            textvariable=self.voice_engine_var,
+            values=list(ENGINES.keys()),
+            state='readonly'
+        )
+        self.engine_combo.pack(fill='x', padx=5, pady=2)
+
+        # Language selection
+        ttk.Label(voice_frame, text="Language:").pack(anchor='w', padx=5)
+        self.language_combo = ttk.Combobox(
+            voice_frame,
+            textvariable=self.language_var,
+            state='readonly'
+        )
+        self.language_combo.pack(fill='x', padx=5, pady=2)
+
+        # Voice selection
+        ttk.Label(voice_frame, text="Voice:").pack(anchor='w', padx=5)
+        self.voice_combo = ttk.Combobox(
+            voice_frame,
+            textvariable=self.voice_var,
+            state='readonly'
+        )
+        self.voice_combo.pack(fill='x', padx=5, pady=2)
+
+        # Bind events
+        self.voice_engine_var.trace_add('write', self.update_language_options)
+        self.language_var.trace_add('write', self.update_voice_options)
+        self.chatbox_ip_var.trace_add('write', self.save_settings)
+
+    def save_settings(self, *args):
+        """Save settings to config file"""
+        config = configparser.ConfigParser()
+        # Save presets
+        config['Presets'] = self.presets
+        # Save other settings
+        config['Settings'] = {
+            'chatbox_ip': self.chatbox_ip_var.get()
+        }
+        with open('config.ini', 'w') as f:
+            config.write(f)
+
+    def setup_window_geometry(self):
+        """Configure the main window geometry"""
+        window_width = 800
+        window_height = 600
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
     def setup_spellchecker(self):
         """Initialize spellchecker"""
@@ -376,34 +522,11 @@ class UIManager:
         ttk.Entry(col1_frame, textvariable=self.hotkey_var, width=50).pack(anchor='w')
 
         # Column 2 Settings
-        ttk.Label(col2_frame, text='Voice Engine:').pack(anchor='w')
-        voice_engines = ['edge-tts', 'polly']
-        self.voice_engine_var = tk.StringVar(value=self.voice_engine)
-        ttk.Combobox(col2_frame, textvariable=self.voice_engine_var, values=voice_engines, state='readonly', width=50).pack(anchor='w')
-
-        ttk.Label(col2_frame, text='Language:').pack(anchor='w')
-        languages = self.get_available_languages()
-        self.language_var = tk.StringVar(value=self.language)
-        self.language_combobox = ttk.Combobox(col2_frame, textvariable=self.language_var, values=languages, state='readonly', width=50)
-        self.language_combobox.pack(anchor='w')
-
-        ttk.Label(col2_frame, text='Voice:').pack(anchor='w')
-        self.voice_var = tk.StringVar(value=self.voice)
-        self.voice_combobox = ttk.Combobox(col2_frame, textvariable=self.voice_var, width=50)
-        self.voice_combobox.pack(anchor='w')
-
-        ttk.Label(col2_frame, text='Chatbox IP:').pack(anchor='w')
-        self.chatbox_ip_var = tk.StringVar(value=self.chatbox_ip)
-        ttk.Entry(col2_frame, textvariable=self.chatbox_ip_var, width=50).pack(anchor='w')
-
-        ttk.Label(col2_frame, text='Chatbox Port:').pack(anchor='w')
-        self.chatbox_port_var = tk.IntVar(value=self.chatbox_port)
-        ttk.Entry(col2_frame, textvariable=self.chatbox_port_var, width=50).pack(anchor='w')
+        self.col2_frame = col2_frame
+        self.init_voice_selection()
 
         # Now add the trace callbacks
-        self.voice_engine_var.trace('w', self.update_voice_options)
         self.voice_engine_var.trace('w', self.save_settings)
-        self.language_var.trace('w', self.update_voice_options)
         self.language_var.trace('w', self.save_settings)
         self.voice_var.trace('w', self.save_settings)
         self.voice_output_var.trace('w', self.save_settings)
@@ -631,7 +754,7 @@ class UIManager:
             if not hasattr(self, 'edge_voice_dict') or not self.edge_voice_dict:
                 self.update_voice_options()
             self.voice = self.edge_voice_dict.get(self.voice_var.get(), self.voice_var.get())
-        elif self.voice_engine == 'polly':
+        elif self.voice_engine.startswith('polly'):
             # Ensure polly_voice_dict is initialized
             if not hasattr(self, 'polly_voice_dict') or not self.polly_voice_dict:
                 self.update_voice_options()
@@ -671,34 +794,23 @@ class UIManager:
         return device_names
 
     def update_voice_options(self, *args):
-        """Updates voice options based on selected engine and language."""
-        selected_engine = self.voice_engine_var.get()
-        if (selected_engine == 'edge-tts'):
-            voices = self.get_all_edge_tts_voices()
-            # Filter voices by selected language
-            selected_language = self.language_var.get()
-            if selected_language:
-                voices = [voice for voice in voices if voice['Locale'] == selected_language]
-            # Build display names and populate edge_voice_dict
-            self.edge_voice_dict = {}
-            display_names = []
-            for voice in voices:
-                # Store ShortName as both key and value
-                shortname = voice['ShortName']
-                display_name = f"{shortname} ({voice['Locale']})"
-                display_names.append(display_name)
-                self.edge_voice_dict[display_name] = shortname
-            self.voice_combobox.config(values=display_names)
-            if self.voice_var.get() not in display_names:
-                self.voice_var.set(display_names[0] if display_names else '')
-        elif selected_engine == 'polly':
-            # Add the code to handle Polly voice options
-            voices = self.get_polly_voices()
-            self.voice_combobox.config(values=voices)
-            if self.voice_var.get() not in voices:
-                self.voice_var.set(voices[0] if voices else '')
+        """Updates voice options based on selected engine and language"""
+        engine = self.voice_engine_var.get()
+        language = self.language_var.get()
+        
+        voice_map = {
+            'Edge TTS': EDGE_VOICES,
+            'Polly Standard': POLLY_STANDARD_VOICES,
+            'Polly Neural': POLLY_NEURAL_VOICES,
+            'Polly Long-Form': POLLY_LONGFORM_VOICES
+        }
+        
+        voices = voice_map.get(engine, {}).get(language, [])
+        self.voice_combobox['values'] = voices
+        if voices:
+            self.voice_var.set(voices[0])
         else:
-            logging.error(f"Unknown voice engine: {selected_engine}")
+            self.voice_var.set('')
 
     def get_available_languages(self):
         """Returns a list of available languages for the selected voice engine."""
@@ -716,7 +828,7 @@ class UIManager:
             except Exception as e:
                 logging.error(f"Error getting languages: {e}")
                 return []
-        elif selected_engine == 'polly':
+        elif selected_engine.startswith('polly'):
             return self.get_polly_languages()
         else:
             return []
@@ -728,7 +840,7 @@ class UIManager:
         
         # Get languages from all engine types
         all_voices = []
-        for engine in ['standard', 'neural', 'generative']:
+        for engine in ['standard', 'neural', 'long-form']:
             try:
                 response = polly_client.describe_voices(Engine=engine)
                 all_voices.extend(response['Voices'])
@@ -740,13 +852,16 @@ class UIManager:
                     if voice['LanguageCode'].startswith('en-')}
         return sorted(languages)
 
-    def get_polly_voices(self):
-        """Returns a list of available voices for Amazon Polly."""
+    def get_polly_voices(self, engine_type):
+        """Returns a list of available voices for Amazon Polly by engine type."""
         import boto3
         polly_client = boto3.client('polly')
         
+        # Use the engine type directly as it's already in the correct format
         try:
-            voices = polly_client.describe_voices()['Voices']
+            response = polly_client.describe_voices(Engine=engine_type)
+            voices = response['Voices']
+            
             # Filter for English voices only
             english_voices = [voice for voice in voices if voice['LanguageCode'].startswith('en-')]
             
@@ -755,13 +870,14 @@ class UIManager:
             self.polly_voice_dict = {}
             
             for voice in english_voices:
-                display_name = f"{voice['Name']}"
+                display_name = f"{voice['Name']} ({engine_type})"
                 voice_names.append(display_name)
-                self.polly_voice_dict[display_name] = voice['Id']
+                # Store the voice ID with engine type
+                self.polly_voice_dict[display_name] = f"{engine_type}|{voice['Id']}"
             
             return sorted(voice_names)
         except Exception as e:
-            logging.error(f"Error getting Polly voices: {e}")
+            logging.error(f"Error getting Polly {engine_type} voices: {e}")
             return []
 
     def get_all_edge_tts_voices(self):
@@ -878,7 +994,7 @@ class UIManager:
             voice_id = self.edge_voice_dict.get(self.voice_var.get(), '')
             if voice_id:
                 self.presets[preset_name] = f"{current_engine}|{voice_id}"
-        elif current_engine == 'polly':
+        elif current_engine.startswith('polly'):
             voice_id = self.polly_voice_dict.get(self.voice_var.get(), '')
             if voice_id:
                 self.presets[preset_name] = f"{current_engine}|{voice_id}"
@@ -918,8 +1034,20 @@ class UIManager:
             # Edge TTS format: "en-US-JennyNeural" -> "en-US"
             return '-'.join(voice_id.split('-')[:2])
         elif engine.startswith('polly'):
-            # Polly format might be different, implement as needed
-            return self.get_polly_language_for_voice(voice_id)
+            # Get language code from Polly voice ID
+            try:
+                import boto3
+                polly_client = boto3.client('polly')
+                # Extract actual voice ID if it includes engine type
+                if '|' in voice_id:
+                    voice_id = voice_id.split('|')[1]
+                response = polly_client.describe_voices()
+                for voice in response['Voices']:
+                    if voice['Id'] == voice_id:
+                        return voice['LanguageCode']
+            except Exception as e:
+                logging.error(f"Error getting Polly voice language: {e}")
+            return 'en-US'  # Default if not found
         return None
 
     def set_voice_delayed(self, voice_id):
@@ -1009,3 +1137,73 @@ class UIManager:
             self.stop_audio()
             return 'break'  # Prevent default spacebar behavior
         return None  # Allow normal spacebar behavior
+
+    def init_voice_selection(self):
+        """Initialize voice selection components"""
+        # Engine Selection
+        ttk.Label(self.col2_frame, text='Voice Engine:').pack(anchor='w')
+        self.voice_engine_var = tk.StringVar(value=list(ENGINES.keys())[0])
+        ttk.Combobox(
+            self.col2_frame, 
+            textvariable=self.voice_engine_var,
+            values=list(ENGINES.keys()),
+            state='readonly',
+            width=50
+        ).pack(anchor='w')
+
+        # Language Selection
+        ttk.Label(self.col2_frame, text='Language:').pack(anchor='w')
+        self.language_var = tk.StringVar()
+        self.language_combobox = ttk.Combobox(
+            self.col2_frame,
+            textvariable=self.language_var,
+            state='readonly',
+            width=50
+        )
+        self.language_combobox.pack(anchor='w')
+
+        # Voice Selection
+        ttk.Label(self.col2_frame, text='Voice:').pack(anchor='w')
+        self.voice_var = tk.StringVar()
+        self.voice_combobox = ttk.Combobox(
+            self.col2_frame,
+            textvariable=self.voice_var,
+            state='readonly',
+            width=50
+        )
+        self.voice_combobox.pack(anchor='w')
+
+        # Bind events
+        self.voice_engine_var.trace_add('write', self.update_language_options)
+        self.language_var.trace_add('write', self.update_voice_options)
+
+    def update_language_options(self, *args):
+        """Update available languages based on selected engine"""
+        engine = self.voice_engine_var.get()
+        languages = ENGLISH_VARIANTS.get(engine, [])
+        self.language_combobox['values'] = languages
+        if languages:
+            self.language_var.set(languages[0])
+        else:
+            self.language_var.set('')
+
+    def create_settings_dialog(self):
+        """Create settings dialog"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Settings")
+        
+        # Create frames
+        col1_frame = ttk.Frame(dialog, padding="10")
+        col1_frame.pack(side='left', fill='both', expand=True)
+        
+        col2_frame = ttk.Frame(dialog, padding="10")
+        col2_frame.pack(side='left', fill='both', expand=True)
+        
+        # Output device settings
+        ttk.Label(col1_frame, text='Output Device:').pack(anchor='w')
+        output_devices = sd.query_devices()
+        self.output_device_var = tk.StringVar(value=self.output_device)
+        ttk.Combobox(col1_frame, textvariable=self.output_device_var, values=output_devices, width=50).pack(anchor='w')
+        
+        # Initialize voice selection components
+        self.init_voice_selection()
