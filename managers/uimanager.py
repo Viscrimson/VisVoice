@@ -13,46 +13,108 @@ import sounddevice as sd
 import asyncio
 import sys
 import configparser
+import os
+import json
 
 # Import keyboard for global hotkey functionality
 import keyboard
+import boto3  # Add AWS SDK for Python
+from PIL import Image, ImageTk
+import tempfile
 
 class UIManager:
-    def __init__(self):
+    def __init__(self, controller):
+        self.controller = controller
+        
+        # Show splash screen first
+        self.show_splash_screen()
+        
         self.root = tk.Tk()
         self.root.title("Vis Voice")
+        
+        # Set application icon - modified for better Windows support
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.dirname(os.path.dirname(__file__))
+            
+            icon_path = os.path.join(base_path, 'resources', 'VisVoiceIcon.png')
+            if os.path.exists(icon_path):
+                # Convert PNG to ICO for Windows
+                icon_image = Image.open(icon_path)
+                icon_photo = ImageTk.PhotoImage(icon_image)
+                self.root.iconphoto(True, icon_photo)  # For Linux/Mac
+                
+                # Create temporary ICO file for Windows taskbar
+                with tempfile.NamedTemporaryFile(suffix='.ico', delete=False) as tmp_ico:
+                    icon_image.save(tmp_ico.name, format='ICO')
+                    self.root.iconbitmap(default=tmp_ico.name)
+                    self.temp_icon = tmp_ico.name  # Store the path to delete later
+        except Exception as e:
+            logging.error(f"Failed to load application icon: {e}")
 
-        self.input_manager = InputManager()
-        self.output_manager = OutputManager()
+        self.spellchecker = None  # Initialize to None first
+
+        # Initialize spellchecker with correct path
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.dirname(os.path.dirname(__file__))
+
+            dict_path = os.path.join(base_path, 'resources', 'en.json')
+            if os.path.exists(dict_path):
+                logging.info(f"Loading dictionary from: {dict_path}")
+                self.spellchecker = SpellChecker(language=None)  # Initialize without language
+                with open(dict_path, 'r', encoding='utf-8') as f:
+                    word_freq = json.load(f)
+                # Load words into the spellchecker
+                self.spellchecker.word_frequency.load_words(word_freq.keys())
+            else:
+                logging.warning(f"Dictionary not found at: {dict_path}, creating basic dictionary")
+                self.spellchecker = SpellChecker(language=None)  # Initialize without language
+                # Create a basic dictionary
+                basic_words = {
+                    "the": 1, "be": 1, "to": 1, "of": 1, "and": 1,
+                    "a": 1, "in": 1, "that": 1, "have": 1, "i": 1
+                }
+                self.spellchecker.word_frequency.load_words(basic_words)
+        except Exception as e:
+            logging.error(f"Failed to initialize spellchecker: {e}")
+            self.spellchecker = SpellChecker(language=None)  # Fallback to empty spellchecker
+            self.spellchecker.word_frequency.load_words({})  # Initialize with empty dictionary
 
         # Initialize settings
         self.input_device = None
         self.output_device = None
         self.chatbox_ip = '127.0.0.1'
         self.chatbox_port = 9000
-        self.voice_engine = 'pyttsx3'
+        self.voice_engine = 'edge-tts'
         self.voice = None
-        self.engine = None
         self.language = 'en-US'  # Default language
         self.hotkey = '`'  # Default hotkey
-
         # Output options
         self.output_options = {'Voice Output': True, 'Chatbox Output': True}
 
-        # Flag to control the main loop
-        self.running = True  # Ensure this is initialized before starting threads
-        self.voice_capture_active = False  # To control voice capture
+        # Initialize StringVar variables for settings
+        self.voice_engine_var = tk.StringVar(value=self.voice_engine)
+        self.language_var = tk.StringVar(value=self.language)
+        self.voice_var = tk.StringVar(value=self.voice)
+
+        # Initialize StringVar variables for chatbox settings
+        self.chatbox_ip_var = tk.StringVar(value=self.chatbox_ip)
+        self.chatbox_port_var = tk.StringVar(value=str(self.chatbox_port))
+
+        # Initialize voice dictionaries
+        self.edge_voice_dict = {}
+        self.aws_polly_voice_dict = {}
+
+        # Flags
         self.is_typing = False  # Flag to detect typing
 
         self.load_settings()
         self.create_widgets()
-        self.spellchecker = SpellChecker()
-
-        # For handling long texts
-        self.max_chatbox_length = 144
-
-        # Start the voice input loop thread
-        threading.Thread(target=self.voice_input_loop, daemon=True).start()
 
         # Set up hotkey listener
         self.setup_hotkey_listener()
@@ -60,6 +122,63 @@ class UIManager:
         # Bind events to detect typing
         self.root.bind_all('<KeyPress>', self.on_key_press)
         self.root.bind_all('<KeyRelease>', self.on_key_release)
+
+    def show_splash_screen(self):
+        """Shows a splash screen that fades away after 3 seconds."""
+        splash = tk.Tk()
+        splash.overrideredirect(True)  # Remove window decorations
+        
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.dirname(os.path.dirname(__file__))
+            
+            logo_path = os.path.join(base_path, 'resources', 'VisVoiceLogo.jpeg')
+            if os.path.exists(logo_path):
+                # Load and display the image
+                image = Image.open(logo_path)
+                # You can adjust the size if needed
+                # image = image.resize((400, 300), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(image)
+                
+                # Create canvas for fade effect
+                canvas = tk.Canvas(splash, width=image.width, height=image.height, highlightthickness=0)
+                canvas.pack()
+                canvas.create_image(0, 0, anchor='nw', image=photo)
+                
+                # Center the splash screen
+                screen_width = splash.winfo_screenwidth()
+                screen_height = splash.winfo_screenheight()
+                position_x = int((screen_width - image.width) / 2)
+                position_y = int((screen_height - image.height) / 2)
+                splash.geometry(f"+{position_x}+{position_y}")
+                
+                splash.update()
+                
+                # Fade effect
+                alpha = 1.0
+                step = 0.1
+                fade_time = 3000  # 3 seconds
+                steps = int(fade_time / 100)  # 10ms per step
+                
+                def fade_out():
+                    nonlocal alpha
+                    if alpha > 0:
+                        alpha -= step
+                        splash.attributes('-alpha', max(alpha, 0))
+                        splash.after(int(fade_time/steps), fade_out)
+                    else:
+                        splash.destroy()
+                
+                # Start fade out after 2 seconds
+                splash.after(2000, fade_out)
+                splash.mainloop()
+                
+        except Exception as e:
+            logging.error(f"Failed to show splash screen: {e}")
+            if splash:
+                splash.destroy()
 
     def load_settings(self):
         """Loads settings from settings.ini or sets defaults."""
@@ -72,7 +191,7 @@ class UIManager:
             self.output_device = settings.get('output_device', self.get_default_output_device())
             self.chatbox_ip = settings.get('chatbox_ip', '127.0.0.1')
             self.chatbox_port = settings.getint('chatbox_port', 9000)
-            self.voice_engine = settings.get('voice_engine', 'pyttsx3')
+            self.voice_engine = settings.get('voice_engine', 'edge-tts')
             self.voice = settings.get('voice', None)
             self.language = settings.get('language', 'en-US')
             self.hotkey = settings.get('hotkey', '`')
@@ -175,17 +294,17 @@ class UIManager:
         stop_audio_button.grid(row=0, column=3, sticky='w')
 
     def get_current_settings_text(self):
-        """Returns a string representing the current important settings."""
+        """Returns a string representing the current settings in the correct order."""
         output_methods = ', '.join([key for key, value in self.output_options.items() if value])
         settings_text = (
             f"Input Device: {self.input_device}\n"
             f"Output Device: {self.output_device}\n"
-            f"Voice Engine: {self.voice_engine}\n"
-            f"Voice: {self.voice}\n"  # Added voice name
+            f"Engine: {self.voice_engine}\n"
             f"Language: {self.language}\n"
+            f"Voice: {self.voice}\n"
             f"Hotkey: {self.hotkey}\n"
             f"Output Methods: {output_methods}\n"
-            f"Chatbox IP: {self.chatbox_ip}, Port: {self.chatbox_port}"
+            f"IP: {self.chatbox_ip}, Port: {self.chatbox_port}"
         )
         return settings_text
 
@@ -195,6 +314,9 @@ class UIManager:
 
     def check_spelling(self, event=None):
         """Checks the spelling of the text in the textbox."""
+        if self.spellchecker is None:
+            return
+            
         self.textbox.tag_remove("misspelled", "1.0", tk.END)
         text = self.textbox.get("1.0", tk.END)
         words = re.finditer(r'\b\w+\b', text)
@@ -244,7 +366,7 @@ class UIManager:
         """Handles the 'Send' button click or Enter key press."""
         text = self.textbox.get("1.0", tk.END).strip()
         if text:
-            self.process_text(text)
+            self.controller.process_text(text)
             self.textbox.delete("1.0", tk.END)
             logging.info(f'Text submitted: {text}')
         else:
@@ -258,13 +380,14 @@ class UIManager:
 
     def toggle_voice_capture(self):
         """Toggles the voice capture on and off."""
-        self.voice_capture_active = not self.voice_capture_active
-        if self.voice_capture_active:
+        self.controller.toggle_voice_capture()
+
+    def update_voice_capture_button(self, active):
+        """Updates the voice capture button's text."""
+        if active:
             self.toggle_voice_button.config(text='Stop Voice Capture')
-            logging.info('Voice capture started.')
         else:
             self.toggle_voice_button.config(text='Start Voice Capture')
-            logging.info('Voice capture stopped.')
 
     def setup_hotkey_listener(self):
         """Sets up the hotkey listener for toggling voice capture."""
@@ -275,323 +398,249 @@ class UIManager:
             logging.error(f'Error setting up hotkey: {e}')
 
     def on_key_press(self, event):
-        self.is_typing = True
+        self.controller.set_typing(True)
 
     def on_key_release(self, event):
-        self.is_typing = False
+        self.controller.set_typing(False)
 
-    def voice_input_loop(self):
-        """Continuously listens for voice input if activated."""
-        while self.running:
-            if self.voice_capture_active and not self.is_typing:
-                text = self.input_manager.get_voice_input()
-                if text:
-                    # Insert transcribed text into the textbox
-                    self.textbox.insert(tk.END, text + ' ')
-                    logging.info(f'Transcribed text inserted into textbox: {text}')
-            else:
-                # If voice capture is not active or user is typing, sleep briefly
-                time.sleep(0.1)
-
-    def process_text(self, text):
-        """Processes the text: splits if necessary, outputs via TTS and chatbox."""
-        # Split text into chunks of up to max_chatbox_length
-        chunks = self.split_text(text, self.max_chatbox_length)
-        # Start processing chunks in a separate thread
-        threading.Thread(target=self.output_chunks, args=(chunks,), daemon=True).start()
-
-    def split_text(self, text, max_length):
-        """Splits text into chunks not exceeding max_length characters, ending on a full sentence or word."""
-        import re
-
-        # Use regular expressions to split text into sentences
-        sentence_endings = re.compile(r'(?<=[.!?])\s+')
-        sentences = sentence_endings.split(text)
-
-        chunks = []
-        current_chunk = ''
-
-        for sentence in sentences:
-            if len(current_chunk) + len(sentence) + 1 <= max_length:
-                current_chunk += (' ' + sentence) if current_chunk else sentence
-            else:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                if len(sentence) <= max_length:
-                    current_chunk = sentence
-                else:
-                    # Split long sentence into smaller chunks
-                    words = sentence.split()
-                    current_sentence_chunk = ''
-                    for word in words:
-                        if len(current_sentence_chunk) + len(word) + 1 <= max_length:
-                            current_sentence_chunk += (' ' + word) if current_sentence_chunk else word
-                        else:
-                            chunks.append(current_sentence_chunk.strip())
-                            current_sentence_chunk = word
-                    if current_sentence_chunk:
-                        current_chunk = current_sentence_chunk
-                    else:
-                        current_chunk = ''
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        return chunks
-
-    def output_chunks(self, chunks):
-        """Outputs text chunks via TTS and sends to chatbox."""
-        for chunk in chunks:
-            # Output via TTS if enabled
-            if self.output_options.get('Voice Output', False):
-                self.output_manager.speak_text(chunk)
-            # Send to chatbox if enabled
-            if self.output_options.get('Chatbox Output', False):
-                self.output_manager.send_to_chatbox(chunk)
-            # Wait for 10 seconds before processing next chunk
-            time.sleep(10)
+    def insert_text(self, text):
+        """Inserts text into the textbox."""
+        self.textbox.insert(tk.END, text)
 
     def show_settings(self):
-        """Displays the settings window."""
+        """Displays the settings window in the correct order."""
         self.settings_window = tk.Toplevel(self.root)
         self.settings_window.title("Settings")
-
         row = 0
 
-        # Output Options
-        ttk.Label(self.settings_window, text='Output Options:', font=('Arial', 10, 'bold')).grid(row=row, column=0, padx=5, pady=5, sticky='W')
-        row += 1
+        # Create all BooleanVar variables at initialization
+        self.voice_output_var = tk.BooleanVar(value=self.output_options['Voice Output'])
+        self.chatbox_output_var = tk.BooleanVar(value=self.output_options['Chatbox Output'])
 
-        self.voice_output_var = tk.BooleanVar(value=self.output_options.get('Voice Output', True))
-        voice_output_cb = ttk.Checkbutton(self.settings_window, text='Voice Output', variable=self.voice_output_var)
-        voice_output_cb.grid(row=row, column=0, padx=5, pady=2, sticky='W')
-
-        self.chatbox_output_var = tk.BooleanVar(value=self.output_options.get('Chatbox Output', True))
-        chatbox_output_cb = ttk.Checkbutton(self.settings_window, text='Chatbox Output', variable=self.chatbox_output_var)
-        chatbox_output_cb.grid(row=row, column=1, padx=5, pady=2, sticky='W')
-        row += 1
-
-        # Input Audio Device
-        ttk.Label(self.settings_window, text='Input Audio Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        # Input Device
+        ttk.Label(self.settings_window, text='Input Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         input_devices = self.get_audio_devices(input=True)
         self.input_device_var = tk.StringVar(value=self.input_device)
-        ttk.Combobox(self.settings_window, textvariable=self.input_device_var, values=input_devices, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Combobox(self.settings_window, textvariable=self.input_device_var, values=input_devices, width=50).grid(
+            row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
-        # Output Audio Device
-        ttk.Label(self.settings_window, text='Output Audio Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        # Output Device
+        ttk.Label(self.settings_window, text='Output Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         output_devices = self.get_audio_devices(output=True)
         self.output_device_var = tk.StringVar(value=self.output_device)
-        ttk.Combobox(self.settings_window, textvariable=self.output_device_var, values=output_devices, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Combobox(self.settings_window, textvariable=self.output_device_var, values=output_devices, width=50).grid(
+            row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
-        # Chatbox IP
-        ttk.Label(self.settings_window, text='Chatbox IP:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
-        self.chatbox_ip_var = tk.StringVar(value=self.chatbox_ip)
-        ttk.Entry(self.settings_window, textvariable=self.chatbox_ip_var, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
-        row += 1
-
-        # Chatbox Port
-        ttk.Label(self.settings_window, text='Chatbox Port:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
-        self.chatbox_port_var = tk.IntVar(value=self.chatbox_port)
-        ttk.Entry(self.settings_window, textvariable=self.chatbox_port_var, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
-        row += 1
-
-        # Voice Engine
-        ttk.Label(self.settings_window, text='Voice Engine:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
-        voice_engines = ['pyttsx3', 'edge-tts']
-        self.voice_engine_var = tk.StringVar(value=self.voice_engine)
-        voice_engine_combobox = ttk.Combobox(self.settings_window, textvariable=self.voice_engine_var, values=voice_engines, state='readonly', width=50)
-        voice_engine_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        # Engine
+        ttk.Label(self.settings_window, text='Engine:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        voice_engines = ['edge-tts', 'aws-polly']
+        ttk.Combobox(self.settings_window, textvariable=self.voice_engine_var, values=voice_engines, state='readonly', width=50).grid(
+            row=row, column=1, padx=5, pady=5, sticky='W')
         self.voice_engine_var.trace('w', self.update_voice_options)
         row += 1
 
-        # Language Selection
+        # Language
         ttk.Label(self.settings_window, text='Language:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         languages = self.get_available_languages()
-        self.language_var = tk.StringVar(value=self.language)
         language_combobox = ttk.Combobox(self.settings_window, textvariable=self.language_var, values=languages, state='readonly', width=50)
         language_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
-        self.language_var.trace('w', self.update_voice_options)
+        self.language_var.trace('w', self.update_voice_options)  # Add this trace
         row += 1
 
-        # Voice Options
+        # Voice
         ttk.Label(self.settings_window, text='Voice:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
-        self.voice_var = tk.StringVar(value=self.voice)
-        self.voice_combobox = ttk.Combobox(self.settings_window, textvariable=self.voice_var, width=50)
+        self.voice_combobox = ttk.Combobox(self.settings_window, textvariable=self.voice_var, state='readonly', width=50)
         self.voice_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
         self.update_voice_options()
         row += 1
 
-        # Hotkey Setting
+        # Hotkey
         ttk.Label(self.settings_window, text='Hotkey:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         self.hotkey_var = tk.StringVar(value=self.hotkey)
-        ttk.Entry(self.settings_window, textvariable=self.hotkey_var, width=50).grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        hotkey_entry = ttk.Entry(self.settings_window, textvariable=self.hotkey_var, width=50)
+        hotkey_entry.grid(row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
-        # Save and Cancel Buttons
-        save_button = ttk.Button(self.settings_window, text='Save', command=self.save_settings)
-        save_button.grid(row=row, column=0, padx=5, pady=10)
-        cancel_button = ttk.Button(self.settings_window, text='Cancel', command=self.settings_window.destroy)
-        cancel_button.grid(row=row, column=1, padx=5, pady=10)
+        # Output Methods Frame
+        ttk.Label(self.settings_window, text='Output Methods:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        methods_frame = ttk.Frame(self.settings_window)
+        methods_frame.grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Checkbutton(methods_frame, text='Voice Output', variable=self.voice_output_var).pack(side='left', padx=5)
+        ttk.Checkbutton(methods_frame, text='Chatbox Output', variable=self.chatbox_output_var).pack(side='left', padx=5)
+        row += 1
 
-    def get_audio_devices(self, input=False, output=False):
-        """Returns a list of available audio devices."""
-        devices = sd.query_devices()
-        device_names = []
-        for idx, device in enumerate(devices):
-            # Skip devices with '(Disabled)' or '(Hidden)' in their names
-            if '(Disabled)' in device['name'] or '(Hidden)' in device['name']:
-                continue
-            # Skip "Primary Sound Driver"
-            if 'Primary Sound Driver' in device['name']:
-                continue
-            if input and device['max_input_channels'] > 0:
-                device_name = f"{device['name']} ({idx})"
-                device_names.append(device_name)
-            if output and device['max_output_channels'] > 0:
-                device_name = f"{device['name']} ({idx})"
-                device_names.append(device_name)
-        return device_names
+        # IP and Port
+        ttk.Label(self.settings_window, text='IP and Port:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        ip_port_frame = ttk.Frame(self.settings_window)
+        ip_port_frame.grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Entry(ip_port_frame, textvariable=self.chatbox_ip_var, width=20).pack(side='left')
+        ttk.Label(ip_port_frame, text=':').pack(side='left', padx=2)
+        ttk.Entry(ip_port_frame, textvariable=self.chatbox_port_var, width=10).pack(side='left')
+        row += 1
+
+        # Save and Cancel buttons
+        button_frame = ttk.Frame(self.settings_window)
+        button_frame.grid(row=row, column=0, columnspan=2, pady=10)
+        ttk.Button(button_frame, text='Save', command=self.save_settings).pack(side='left', padx=5)
+        ttk.Button(button_frame, text='Cancel', command=self.settings_window.destroy).pack(side='left', padx=5)
+
+    def save_settings(self):
+        """Saves the settings from the settings window."""
+        try:
+            # Extract device indices from the selected device names
+            self.input_device = self.input_device_var.get()
+            self.output_device = self.output_device_var.get()
+
+            input_device_index = int(self.input_device.split('(')[-1].strip(')'))
+            output_device_index = int(self.output_device.split('(')[-1].strip(')'))
+
+            # Update sounddevice settings
+            sd.default.device = (input_device_index, output_device_index)
+            
+            # Force sounddevice to use new settings
+            sd.stop()
+            
+            self.chatbox_ip = self.chatbox_ip_var.get()
+            self.chatbox_port = self.chatbox_port_var.get()
+            self.voice_engine = self.voice_engine_var.get()
+            self.voice = self.voice_var.get()
+            self.language = self.language_var.get()
+            self.hotkey = self.hotkey_var.get()
+
+            # Output options
+            self.output_options['Voice Output'] = self.voice_output_var.get()
+            self.output_options['Chatbox Output'] = self.chatbox_output_var.get()
+
+            # Apply the settings
+            sd.default.device = (input_device_index, output_device_index)
+            if self.voice_engine == 'edge-tts':
+                self.voice = self.edge_voice_dict.get(self.voice, self.voice)
+            elif self.voice_engine == 'aws-polly':
+                self.voice = self.aws_polly_voice_dict.get(self.voice, self.voice)
+
+            # Update the OutputManager via the controller
+            self.controller.output_manager.update_settings(
+                chatbox_ip=self.chatbox_ip,
+                chatbox_port=self.chatbox_port,
+                voice_engine=self.voice_engine,
+                voice=self.voice,
+            )
+
+            # Update the current settings label
+            self.update_current_settings_label()
+
+            # Update hotkey
+            keyboard.unhook_all_hotkeys()
+            self.setup_hotkey_listener()
+
+            # Save settings to file
+            self.save_settings_to_file()
+
+            logging.info('Settings have been saved.')
+            self.settings_window.destroy()
+        except Exception as e:
+            logging.error(f"Error saving settings: {e}")
+            messagebox.showerror("Error", f"Failed to save settings: {str(e)}")
 
     def update_voice_options(self, *args):
-        """Updates the voice options based on the selected voice engine and language."""
-        selected_engine = self.voice_engine_var.get()
-        if selected_engine == 'pyttsx3':
-            voices = self.get_pyttsx3_voices()
-        elif selected_engine == 'edge-tts':
-            voices = self.get_edge_tts_voices()
-        else:
-            voices = []
-        self.voice_combobox.config(values=voices)
-        if self.voice not in voices:
-            self.voice_var.set(voices[0] if voices else '')
+        """Updates the voice options based on the selected engine and language."""
+        try:
+            selected_engine = self.voice_engine_var.get()
+            selected_language = self.language_var.get()
+            
+            if selected_engine == 'edge-tts':
+                voices = self.get_edge_tts_voices(selected_language)
+            elif selected_engine == 'aws-polly':
+                voices = self.get_aws_polly_voices(selected_language)
+            else:
+                voices = []
+                
+            self.voice_combobox['values'] = voices
+            # Only set to first voice if current selection is invalid
+            if not self.voice_var.get() or self.voice_var.get() not in voices:
+                self.voice_var.set(voices[0] if voices else '')
+                
+        except Exception as e:
+            logging.error(f"Error updating voice options: {e}")
 
     def get_available_languages(self):
         """Returns a list of available languages for the selected voice engine."""
         selected_engine = self.voice_engine_var.get()
-        if selected_engine == 'edge-tts':
+        if (selected_engine == 'edge-tts'):
             voices = self.get_all_edge_tts_voices()
             languages = set()
             for voice in voices:
-                languages.add(voice['Locale'])
+                # Only include English languages
+                if voice['Locale'].startswith('en-'):
+                    languages.add(voice['Locale'])
             return sorted(languages)
-        elif selected_engine == 'pyttsx3':
-            # pyttsx3 does not provide language info
-            return ['en-US']
+        elif selected_engine == 'aws-polly':
+            return ['en-US', 'en-GB', 'en-AU', 'en-IN']  # Restrict to English variants
         else:
             return []
 
-    def get_pyttsx3_voices(self):
-        """Returns a list of available voices for pyttsx3."""
-        import pyttsx3
-        self.engine = pyttsx3.init()
-        voices = self.engine.getProperty('voices')
-        voice_names = [f"{voice.id} - {voice.name}" for voice in voices]
-        self.pyttsx3_voice_dict = {f"{voice.id} - {voice.name}": voice.id for voice in voices}
+    def get_all_edge_tts_voices(self):
+        """Retrieves all voices from edge-tts."""
+        import edge_tts
+        voices = asyncio.run(edge_tts.list_voices())
+        return voices
+
+    def get_edge_tts_voices(self, selected_language):
+        """Returns a list of available voices for Edge TTS given a language."""
+        voices = self.get_all_edge_tts_voices()
+        voice_names = []
+        self.edge_voice_dict = {}
+        for voice in voices:
+            if voice['Locale'] == selected_language:
+                voice_names.append(voice['FriendlyName'])
+                self.edge_voice_dict[voice['FriendlyName']] = voice['ShortName']
         return voice_names
 
-    def get_edge_tts_voices(self):
-        """Retrieves edge-tts voices filtered by the selected language."""
-        voices = []
-        self.edge_voice_dict = {}
+    def get_aws_polly_voices(self, selected_language):
+        """Returns a list of available voices for AWS Polly given a language."""
         try:
-            all_voices = self.get_all_edge_tts_voices()
-            selected_language = self.language_var.get()
-            # Filter voices by selected language
-            filtered_voices = [voice for voice in all_voices if voice['Locale'] == selected_language]
-            if not filtered_voices:
-                logging.warning(f"No voices found for language: {selected_language}")
-                return []
+            polly_client = boto3.client('polly', region_name='us-east-1')
+            response = polly_client.describe_voices(LanguageCode=selected_language)
+            voices = response['Voices']
             voice_names = []
-            for voice in filtered_voices:
-                # Safely access 'LocalName' or fall back to other names
-                local_name = voice.get('LocalName') or voice.get('FriendlyName') or voice.get('ShortName')
-                display_name = f"{voice['ShortName']} - {local_name} ({voice['Locale']})"
-                voice_names.append(display_name)
-                self.edge_voice_dict[display_name] = voice['ShortName']
-            voices = voice_names
+            self.aws_polly_voice_dict = {}
+            for voice in voices:
+                # Only include Neural voices
+                if voice['SupportedEngines'] == ['neural']:
+                    name = f"{voice['Name']} (Neural)"
+                    voice_names.append(name)
+                    self.aws_polly_voice_dict[name] = voice['Id']
+            return sorted(voice_names)
         except Exception as e:
-            logging.error(f"Error retrieving edge-tts voices: {e}")
-        return voices
+            logging.error(f"Error getting AWS Polly voices: {e}")
+            return []
 
-    def get_all_edge_tts_voices(self):
-        """Returns a list of all available voices for edge-tts."""
-        if hasattr(self, 'edge_voices') and self.edge_voices:
-            return self.edge_voices
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            self.edge_voices = loop.run_until_complete(self.get_all_edge_tts_voices_async())
-            loop.close()
-        except Exception as e:
-            logging.error(f"Error retrieving edge-tts voices: {e}")
-            self.edge_voices = []
-        return self.edge_voices
-
-    async def get_all_edge_tts_voices_async(self):
-        """Asynchronously retrieves all available voices for edge-tts."""
-        from edge_tts import VoicesManager
-        voices = []
-        try:
-            voices_manager = await VoicesManager.create()
-            voices = voices_manager.voices
-        except Exception as e:
-            logging.error(f"Error retrieving edge-tts voices: {e}")
-        return voices
-
-    def save_settings(self):
-        """Saves the settings from the settings window."""
-        # Extract device indices from the selected device names
-        self.input_device = self.input_device_var.get()
-        self.output_device = self.output_device_var.get()
-
-        input_device_index = int(self.input_device.split('(')[-1].strip(')'))
-        output_device_index = int(self.output_device.split('(')[-1].strip(')'))
-
-        self.chatbox_ip = self.chatbox_ip_var.get()
-        self.chatbox_port = self.chatbox_port_var.get()
-        self.voice_engine = self.voice_engine_var.get()
-        self.voice = self.voice_var.get()
-        self.language = self.language_var.get()
-        self.hotkey = self.hotkey_var.get()
-
-        # Output options
-        self.output_options['Voice Output'] = self.voice_output_var.get()
-        self.output_options['Chatbox Output'] = self.chatbox_output_var.get()
-
-        # Apply the settings
-        sd.default.device = (input_device_index, output_device_index)
-        if self.voice_engine == 'edge-tts':
-            self.voice = self.edge_voice_dict.get(self.voice, self.voice)
-        elif self.voice_engine == 'pyttsx3':
-            self.voice = self.pyttsx3_voice_dict.get(self.voice, self.voice)
-        self.output_manager.update_settings(
-            chatbox_ip=self.chatbox_ip,
-            chatbox_port=self.chatbox_port,
-            voice_engine=self.voice_engine,
-            voice=self.voice
-        )
-        # Update the current settings label
-        self.update_current_settings_label()
-
-        # Update hotkey
-        keyboard.unhook_all_hotkeys()
-        self.setup_hotkey_listener()
-
-        # Save settings to file
-        self.save_settings_to_file()
-
-        logging.info('Settings have been saved.')
-        self.settings_window.destroy()
+    def get_audio_devices(self, input=False, output=False):
+        """Returns a list of available audio devices."""
+        devices = sd.query_devices()
+        device_names = set()
+        for idx, device in enumerate(devices):
+            # Skip MME devices and focus on Windows DirectSound/WASAPI
+            if 'MME' in device['name']:
+                continue
+            # Skip disabled and unwanted devices
+            if any(x in device['name'] for x in ['(Disabled)', '(Hidden)', 'Microsoft Sound Mapper']):
+                continue
+            name = f"{device['name']} ({idx})"
+            if input and device['max_input_channels'] > 0:
+                device_names.add(name)
+            if output and device['max_output_channels'] > 0:
+                device_names.add(name)
+        return sorted(device_names)
 
     def stop_audio(self):
         """Stops audio playback."""
-        self.output_manager.stop_audio()
+        self.controller.stop_audio()
 
     def on_closing(self):
         """Handles actions when the window is closed."""
-        self.running = False
-        self.output_manager.stop_audio()  # Ensure audio is stopped
-        keyboard.unhook_all()
         self.root.destroy()
         sys.exit(0)
 
