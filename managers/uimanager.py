@@ -19,18 +19,16 @@ import keyboard
 
 # Engine Names and Types
 ENGINES = {
-    'Edge TTS': 'Microsoft Edge TTS',
     'Polly Standard': 'Amazon Polly (Standard)',
     'Polly Neural': 'Amazon Polly (Neural)',
-    'Polly Long-Form': 'Amazon Polly (Long-Form NTTS)'
+    'Polly Generative': 'Amazon Polly (Generative)'
 }
 
 # English Language Codes
 ENGLISH_VARIANTS = {
-    'Edge TTS': ['en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IN'],
-    'Polly Standard': ['en-US', 'en-GB', 'en-AU', 'en-IN'],
-    'Polly Neural': ['en-US', 'en-GB'],
-    'Polly Long-Form': ['en-US']
+    'Polly Standard': ['en-AU', 'en-GB', 'en-IN', 'en-US'],
+    'Polly Neural': ['en-AU', 'en-GB', 'en-IN', 'en-IE', 'en-NZ', 'en-ZA', 'en-US'],
+    'Polly Generative': ['en-AU', 'en-GB', 'en-IN', 'en-ZA', 'en-US']
 }
 
 # Voice Mappings
@@ -43,19 +41,32 @@ EDGE_VOICES = {
 }
 
 POLLY_STANDARD_VOICES = {
-    'en-US': ['Joanna', 'Ivy', 'Kendra', 'Kimberly', 'Salli', 'Joey', 'Justin', 'Matthew'],
-    'en-GB': ['Amy', 'Emma', 'Brian'],
-    'en-AU': ['Russell', 'Nicole'],
-    'en-IN': ['Aditi', 'Raveena']
+    'en-AU': ['Nicole', 'Russell'],
+    'en-GB': ['Amy', 'Emma', 'Brian'],  # Removed 'Arthur'
+    'en-IN': ['Aditi', 'Raveena'],      # Added 'Raveena'
+    'en-US': ['Ivy', 'Joanna', 'Kendra']  # Removed 'Gregory', 'Kevin', 'Ruth', 'Stephen', 'Patrick'
 }
 
 POLLY_NEURAL_VOICES = {
-    'en-US': ['Joanna-Neural', 'Ivy-Neural', 'Kendra-Neural', 'Kevin-Neural', 'Matthew-Neural'],
-    'en-GB': ['Amy-Neural', 'Emma-Neural', 'Brian-Neural']
+    'en-AU': ['Olivia'],
+    'en-GB': ['Amy', 'Emma', 'Brian', 'Arthur'],  # Added 'Arthur'
+    'en-IN': ['Kajal'],                           # Removed 'Aditi', 'Raveena'
+    'en-IE': ['Niamh'],
+    'en-NZ': ['Aria'],
+    'en-ZA': ['Ayanda'],
+    'en-US': [
+        'Danielle', 'Ivy', 'Joanna', 'Kendra', 'Kimberly', 'Salli',
+        'Joey', 'Justin', 'Kevin', 'Matthew', 'Ruth', 'Stephen', 'Gregory'
+        # Removed 'Geraint'
+    ]
 }
 
-POLLY_LONGFORM_VOICES = {
-    'en-US': ['Joanna-Neural-Long', 'Matthew-Neural-Long']
+POLLY_GENERATIVE_VOICES = {
+    'en-AU': ['Olivia'],
+    'en-GB': ['Amy', 'Emma', 'Brian', 'Arthur'],  # Added 'Emma', 'Brian', 'Arthur'
+    'en-IN': ['Kajal'],
+    'en-ZA': ['Ayanda'],  # 'Danielle' also can be removed or tested if needed
+    'en-US': ['Danielle', 'Joanna', 'Matthew', 'Ruth', 'Stephen']
 }
 
 class UIManager:
@@ -92,7 +103,7 @@ class UIManager:
         self.output_device = None
         self.chatbox_ip = '127.0.0.1'
         self.chatbox_port = 9000
-        self.voice_engine = 'edge-tts'
+        self.voice_engine = 'Polly Standard'
         self.voice = None
         self.language = 'en-US'
         self.hotkey = '`'
@@ -128,6 +139,7 @@ class UIManager:
 
         # Initialize empty presets dictionary
         self.presets = {}
+        self.typing_indicator_enabled_var = tk.BooleanVar(value=True)
 
     def create_widgets(self):
         # Main frame
@@ -147,6 +159,14 @@ class UIManager:
         )
         self.chatbox_ip_entry.pack(side='left', padx=5)
 
+        # Enable Typing Indicator checkbox
+        self.typing_indicator_enabled_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            self.settings_frame,
+            text="Enable Typing Indicator",
+            variable=self.typing_indicator_enabled_var
+        ).pack(side='left', padx=5)
+
         # Voice settings
         self.create_voice_settings()
         
@@ -157,6 +177,18 @@ class UIManager:
         # Add preset buttons
         for preset_name in self.presets:
             self.create_preset_button(presets_frame, preset_name)
+
+        # Add key bindings for typing indicator
+        self.textbox.bind('<Key>', self.on_typing)
+        self.textbox.bind('<KeyRelease>', self.on_typing_stop)
+
+    def create_preset_button(self, parent, preset_name):
+        """Creates a preset button."""
+        button = ttk.Button(parent, text=preset_name, command=lambda: self.apply_preset(preset_name))
+        button.pack(side='left', padx=5, pady=5)
+
+        # Optionally, store buttons if needed for further manipulation
+        self.preset_buttons[preset_name] = button
 
     def create_voice_settings(self):
         voice_frame = ttk.LabelFrame(self.main_frame, text="Voice Settings")
@@ -196,16 +228,26 @@ class UIManager:
         self.chatbox_ip_var.trace_add('write', self.save_settings)
 
     def save_settings(self, *args):
-        """Save settings to config file"""
-        config = configparser.ConfigParser()
-        # Save presets
-        config['Presets'] = self.presets
-        # Save other settings
-        config['Settings'] = {
-            'chatbox_ip': self.chatbox_ip_var.get()
-        }
-        with open('config.ini', 'w') as f:
-            config.write(f)
+        """Saves the settings when any setting is changed."""
+        try:
+            self.output_options['Voice Output'] = self.voice_output_var.get()
+            self.output_options['Chatbox Output'] = self.chatbox_output_var.get()
+            self.voice_engine = self.voice_engine_var.get()
+            self.language = self.language_var.get()
+            self.voice = self.voice_var.get()
+            self.chatbox_ip = self.chatbox_ip_var.get()
+            self.chatbox_port = self.chatbox_port_var.get()
+            self.hotkey = self.hotkey_var.get()
+            
+            self.output_manager.update_settings(
+                self.chatbox_ip,
+                self.chatbox_port,
+                self.voice_engine,
+                self.voice
+            )
+            self.save_settings_to_file()
+        except Exception as e:
+            logging.error(f"Error saving settings: {e}")
 
     def setup_window_geometry(self):
         """Configure the main window geometry"""
@@ -244,11 +286,7 @@ class UIManager:
         
         # Set voice if available
         if self.voice:
-            # Find matching voice in combobox values
-            for voice_option in self.voice_combobox['values']:
-                if self.voice in voice_option:
-                    self.voice_var.set(voice_option)
-                    break
+            self.voice_var.set(self.voice)
 
     def apply_dark_mode(self):
         """Apply dark mode theme"""
@@ -345,7 +383,7 @@ class UIManager:
             self.output_device = settings.get('output_device', self.get_default_output_device())
             self.chatbox_ip = settings.get('chatbox_ip', '127.0.0.1')
             self.chatbox_port = settings.getint('chatbox_port', 9000)
-            self.voice_engine = settings.get('voice_engine', 'edge-tts')  # Changed default to edge-tts
+            self.voice_engine = settings.get('voice_engine', 'Polly Standard')  # Changed default to Polly Standard
             self.voice = settings.get('voice')
             self.language = settings.get('language', 'en-US')
             self.hotkey = settings.get('hotkey', '`')
@@ -578,7 +616,8 @@ class UIManager:
                 self.textbox.delete(start_idx, end_idx)
                 self.textbox.insert(start_idx, best_suggestion)
                 self.textbox.tag_add("corrected", start_idx, f"{start_idx}+{len(best_suggestion)}c")
-        self.textbox.tag_config("corrected", foreground="blue")
+        # Change corrected text color to yellow for better visibility on dark background
+        self.textbox.tag_config("corrected", foreground="#ffff00")  # Bright yellow
 
     def show_suggestions(self, event):
         """Shows spelling suggestions for the misspelled word."""
@@ -615,13 +654,16 @@ class UIManager:
 
     def submit_text(self, event=None):
         """Handles the 'Send' button click or Enter key press."""
+        # Stop typing indicator before sending
+        self.output_manager.typing_indicator.stop_typing()
         text = self.textbox.get("1.0", tk.END).strip()
         if text:
-            self.process_text(text)
+            self.output_manager.send_to_chatbox(text)
+            self.output_manager.speak_text(text)
             self.textbox.delete("1.0", tk.END)
-            logging.info(f'Text submitted: {text}')
+            logging.info('Text submitted and spoken.')
         else:
-            logging.warning('No text entered.')
+            logging.info('No text to submit.')
         return 'break'  # Prevent default behavior of adding a newline
 
     def cancel_text(self):
@@ -634,10 +676,12 @@ class UIManager:
         self.voice_capture_active = not self.voice_capture_active
         if self.voice_capture_active:
             self.toggle_voice_button.config(text='Stop Voice Capture')
-            logging.info('Voice capture started.')
+            threading.Thread(target=self.voice_input_loop, daemon=True).start()
+            logging.info("Voice capture started.")
         else:
             self.toggle_voice_button.config(text='Start Voice Capture')
-            logging.info('Voice capture stopped.')
+            self.running = False
+            logging.info("Voice capture stopped.")
 
     def setup_hotkey_listener(self):
         """Sets up the hotkey listener for toggling voice capture."""
@@ -657,13 +701,15 @@ class UIManager:
         """Continuously listens for voice input if activated."""
         while self.running:
             if self.voice_capture_active and not self.is_typing:
+                logging.debug("Voice capture active, attempting to get input...")
                 text = self.input_manager.get_voice_input()
                 if text:
-                    # Insert transcribed text into the textbox
-                    self.textbox.insert(tk.END, text + ' ')
-                    logging.info(f'Transcribed text inserted into textbox: {text}')
+                    logging.info(f"Voice input received: {text}")
+                    # Update UI in thread-safe way
+                    self.root.after(0, lambda: self.textbox.insert(tk.END, text + ' '))
+                else:
+                    logging.debug("No text transcribed from voice input")
             else:
-                # If voice capture is not active or user is typing, sleep briefly
                 time.sleep(0.1)
 
     def process_text(self, text):
@@ -775,22 +821,13 @@ class UIManager:
         logging.info('Settings have been saved.')
 
     def get_audio_devices(self, input=False, output=False):
-        """Returns a list of available audio devices."""
+        wasapi_hostapi = sd.default.hostapi
         devices = sd.query_devices()
         device_names = []
-        for idx, device in enumerate(devices):
-            # Skip devices with '(Disabled)' or '(Hidden)' in their names
-            if '(Disabled)' in device['name'] or '(Hidden)' in device['name']:
-                continue
-            # Skip "Primary Sound Driver"
-            if 'Primary Sound Driver' in device['name']:
-                continue
-            if input and device['max_input_channels'] > 0:
-                device_name = f"{device['name']} ({idx})"
-                device_names.append(device_name)
-            if output and device['max_output_channels'] > 0:
-                device_name = f"{device['name']} ({idx})"
-                device_names.append(device_name)
+        for idx, dev in enumerate(devices):
+            if dev['hostapi'] == wasapi_hostapi:
+                if (input and dev['max_input_channels'] > 0) or (output and dev['max_output_channels'] > 0):
+                    device_names.append(f"{dev['name']} ({idx})")
         return device_names
 
     def update_voice_options(self, *args):
@@ -802,7 +839,7 @@ class UIManager:
             'Edge TTS': EDGE_VOICES,
             'Polly Standard': POLLY_STANDARD_VOICES,
             'Polly Neural': POLLY_NEURAL_VOICES,
-            'Polly Long-Form': POLLY_LONGFORM_VOICES
+            'Polly Generative': POLLY_GENERATIVE_VOICES
         }
         
         voices = voice_map.get(engine, {}).get(language, [])
@@ -840,7 +877,7 @@ class UIManager:
         
         # Get languages from all engine types
         all_voices = []
-        for engine in ['standard', 'neural', 'long-form']:
+        for engine in ['standard', 'neural', 'generative']:
             try:
                 response = polly_client.describe_voices(Engine=engine)
                 all_voices.extend(response['Voices'])
@@ -932,6 +969,17 @@ class UIManager:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.mainloop()
 
+    def apply_preset(self, preset_name):
+        """Applies a voice preset based on the preset name."""
+        preset = self.presets.get(preset_name)
+        if preset:
+            engine, voice = preset.split('|')
+            self.voice_engine_var.set(engine)
+            self.voice_var.set(voice)
+            logging.info(f"Applied preset '{preset_name}': Engine={engine}, Voice={voice}")
+        else:
+            logging.error(f"Preset '{preset_name}' not found.")
+
     def apply_preset(self, voice, preset_name):
         """Applies the selected voice preset."""
         if not voice:
@@ -980,8 +1028,18 @@ class UIManager:
         for voice in voices:
             if voice_id in voice:
                 self.voice_var.set(voice)
+                self.voice = voice_id
                 self.save_settings()
                 break
+        # Determine engine based on voice selection
+        if voice_id in POLLY_GENERATIVE_VOICES.get(self.language, []):
+            self.voice_engine = 'Polly Generative'
+        elif voice_id in POLLY_NEURAL_VOICES.get(self.language, []):
+            self.voice_engine = 'Polly Neural'
+        else:
+            self.voice_engine = 'Polly Standard'
+        self.voice_var.set(voice_id)
+        logging.info(f"Set voice to '{voice_id}' with engine '{self.voice_engine}'")
 
     def update_preset(self, button, voice):
         """Updates the preset with the new voice."""
@@ -1064,7 +1122,7 @@ class UIManager:
         menu = tk.Menu(self.root, tearoff=0)
         
         # Get current voice selection
-        current_voice = self.edge_voice_dict.get(self.voice_var.get(), '')
+        current_voice = self.voice_var.get()  # Changed from edge_voice_dict lookup
         
         # Add option to set current voice as preset
         menu.add_command(
@@ -1207,3 +1265,38 @@ class UIManager:
         
         # Initialize voice selection components
         self.init_voice_selection()
+
+    def on_typing(self, event):
+        if self.typing_indicator_enabled_var.get() and not self.is_typing:
+            self.is_typing = True
+            self.output_manager.typing_indicator.start_typing()
+
+    def on_typing_stop(self, event=None):
+        if self.typing_indicator_enabled_var.get() and self.is_typing:
+            self.is_typing = False
+            self.output_manager.typing_indicator.stop_typing()
+
+    def on_typing(self, event):
+        """Handle typing events"""
+        # Only trigger on actual typing (not on special keys)
+        if event.char and ord(event.char) >= 32:
+            if not hasattr(self, '_last_type_time'):
+                self._last_type_time = 0
+            
+            current_time = time.time()
+            # Start typing indicator if it's been more than 1 second since last type
+            if current_time - self._last_type_time > 1:
+                self.output_manager.typing_indicator.start_typing()
+            
+            self._last_type_time = current_time
+            
+            # Schedule typing stop after delay
+            if hasattr(self, '_typing_timer'):
+                self.root.after_cancel(self._typing_timer)
+            self._typing_timer = self.root.after(2000, self.on_typing_stop)
+
+    def on_typing_stop(self, event=None):
+        """Stop typing indicator after delay"""
+        if hasattr(self, '_typing_timer'):
+            self.root.after_cancel(self._typing_timer)
+        self.output_manager.typing_indicator.stop_typing()
