@@ -24,6 +24,7 @@ class OutputManager:
         self.tts_queue = queue.Queue()
         self.is_playing = False
         self.playback_thread = None  # For managing playback thread
+        self.audio_finished = threading.Event()
         self.initialize_tts_engine()
 
     def initialize_tts_engine(self):
@@ -110,9 +111,13 @@ class OutputManager:
                 voice=self.voice
             )
             await communicate.save(output_file)
-            logging.info("Playing Edge TTS audio...")
+            
+            # Play audio and send OSC message
+            self.audio_finished.clear()
             self.play_audio_file(output_file)
-            logging.info("Edge TTS audio playback finished.")
+            self.send_to_chatbox(text)
+            self.audio_finished.wait()  # Wait for audio to finish
+            
         except Exception as e:
             logging.error(f"Error during Edge TTS playback: {e}")
         finally:
@@ -133,12 +138,17 @@ class OutputManager:
                 logging.error(f"Unsupported audio format: {filepath}")
                 return
             self.is_playing = True
-            sd.play(data, samplerate)
+            sd.play(data, samplerate, callback=self._audio_callback)
             sd.wait()
-            self.is_playing = False
         except Exception as e:
             logging.error(f"Error playing audio file: {e}")
             self.is_playing = False
+            self.audio_finished.set()
+
+    def _audio_callback(self, *args):
+        """Callback when audio finishes playing"""
+        self.is_playing = False
+        self.audio_finished.set()
 
     def stop_audio(self):
         """Stops audio playback."""

@@ -13,32 +13,49 @@ import webrtcvad
 import collections
 import sys
 import os
+from tqdm.utils import DisableOnWindows
+from tqdm import tqdm
 
 class InputManager:
     def __init__(self):
-        logging.info("Loading Whisper model...")
+        self.logger = logging.getLogger('VisVoice.InputManager')
+        self.logger.info("Initializing InputManager...")
+        
+        # Set device first
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.logger.info(f"Using device: {self.device}")
+        
         try:
-            # Get the base directory for the application
-            if getattr(sys, 'frozen', False):
-                base_path = sys._MEIPASS
-            else:
-                base_path = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+            # Initialize VAD first as it's simpler
+            self.vad = webrtcvad.Vad(2)
+            self.logger.info("VAD initialized")
             
-            # Initialize Whisper with the correct model path
-            self.model = whisper.load_model(
-                "base", 
-                device=self.device,
-                download_root=os.path.join(base_path, "whisper", "assets")
-            )
-            logging.info(f"Whisper model loaded on {self.device}.")
+            # Create cache directory in appdata
+            cache_dir = os.path.join(os.getenv('APPDATA'), 'VisVoice', 'cache')
+            os.makedirs(cache_dir, exist_ok=True)
+            self.logger.info(f"Cache directory: {cache_dir}")
+            
+            # Disable progress bar and load model
+            os.environ["PYTHONIOENCODING"] = "utf-8"
+            tqdm._instances.clear()
+            
+            self.logger.info("Loading Whisper model (this may take a while)...")
+            with DisableOnWindows():
+                self.model = whisper.load_model(
+                    "base",
+                    device=self.device,
+                    in_memory=True  # Try to keep model in memory
+                )
+            self.logger.info("Whisper model loaded successfully")
+            
         except Exception as e:
-            logging.error(f"Failed to load Whisper model: {e}")
+            self.logger.error("Failed to initialize", exc_info=True)
             raise
-        self.vad = webrtcvad.Vad(2)  # Aggressiveness from 0 to 3
+
         self.stream = None
 
     def get_voice_input(self):
+        logging.debug("Starting voice input capture...")
         logging.info("Listening for voice input with VAD...")
         sample_rate = 16000
         frame_duration = 30  # ms
@@ -50,6 +67,10 @@ class InputManager:
         voiced_frames = []
 
         try:
+            # Log audio device info
+            device_info = sd.query_devices(sd.default.device[0])
+            logging.debug("Using input device: %s", device_info)
+            
             with sd.InputStream(
                 samplerate=sample_rate,
                 channels=1,
@@ -63,25 +84,30 @@ class InputManager:
                         logging.warning("Audio buffer overflowed")
                     
                     is_speech = self.vad.is_speech(data.tobytes(), sample_rate)
+                    logging.debug("VAD result: %s", is_speech)
                     if not triggered:
                         ring_buffer.append((data.tobytes(), is_speech))
                         num_voiced = len([f for f, speech in ring_buffer if speech])
+                        logging.debug("Number of voiced frames: %d", num_voiced)
                         if num_voiced > threshold * num_padding_frames:
                             triggered = True
                             voiced_frames.extend([f for f, s in ring_buffer])
                             ring_buffer.clear()
+                            logging.debug("Voice activity detected, starting recording")
                     else:
                         voiced_frames.append(data.tobytes())
                         ring_buffer.append((data.tobytes(), is_speech))
                         num_unvoiced = len([f for f, speech in ring_buffer if not speech])
+                        logging.debug("Number of unvoiced frames: %d", num_unvoiced)
                         if num_unvoiced > threshold * num_padding_frames:
+                            logging.debug("End of speech detected")
                             break  # End of speech
                     if len(voiced_frames) > sample_rate * 10:  # Limit recording to 10 seconds
                         logging.info("Max recording duration reached.")
                         break
 
         except Exception as e:
-            logging.error(f"Error during voice input: {e}")
+            logging.error("Error during voice input: %s", e, exc_info=True)
             return None
 
         if not voiced_frames:

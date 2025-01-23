@@ -24,39 +24,69 @@ import tempfile
 
 class UIManager:
     def __init__(self, controller):
-        self.controller = controller
+        self.logger = logging.getLogger('VisVoice.UI')
+        self.logger.info("Creating main window...")
         
-        # Show splash screen first
-        self.show_splash_screen()
-        
+        # Create main window
         self.root = tk.Tk()
-        self.root.title("Vis Voice")
+        self.root.title("VisVoice")
+        self.root.geometry("800x600")
         
-        # Set application icon - modified for better Windows support
-        try:
-            if getattr(sys, 'frozen', False):
-                base_path = sys._MEIPASS
-            else:
-                base_path = os.path.dirname(os.path.dirname(__file__))
+        # Dark theme
+        self.dark_bg = '#2b2b2b'
+        self.dark_fg = '#ffffff'
+        self.root.configure(bg=self.dark_bg)
+        
+        # Load config first
+        self.load_config()
+        
+        # Create UI elements
+        self.create_widgets()
+        
+        self.logger.info("UI initialized successfully")
+
+    def load_config(self):
+        """Load settings from config.ini"""
+        self.logger.info("Loading configuration...")
+        config = configparser.ConfigParser()
+        config.read('config.ini')
+        
+        if 'Settings' not in config:
+            self.logger.warning("No settings found, using defaults")
+            return
             
-            icon_path = os.path.join(base_path, 'resources', 'VisVoiceIcon.png')
-            if os.path.exists(icon_path):
-                # Convert PNG to ICO for Windows
-                icon_image = Image.open(icon_path)
-                icon_photo = ImageTk.PhotoImage(icon_image)
-                self.root.iconphoto(True, icon_photo)  # For Linux/Mac
-                
-                # Create temporary ICO file for Windows taskbar
-                with tempfile.NamedTemporaryFile(suffix='.ico', delete=False) as tmp_ico:
-                    icon_image.save(tmp_ico.name, format='ICO')
-                    self.root.iconbitmap(default=tmp_ico.name)
-                    self.temp_icon = tmp_ico.name  # Store the path to delete later
-        except Exception as e:
-            logging.error(f"Failed to load application icon: {e}")
+        settings = config['Settings']
+        # ... rest of config loading ...
 
-        self.spellchecker = None  # Initialize to None first
+    def initialize_settings(self):
+        """Initialize all settings variables"""
+        self.input_device = None
+        self.output_device = None
+        self.chatbox_ip = '127.0.0.1'
+        self.chatbox_port = 0
+        self.voice_engine = 'edge-tts'
+        self.voice = None
+        self.language = 'en-US'
+        self.hotkey = '`'
+        self.output_options = {'Voice Output': True, 'Chatbox Output': True}
+        
+        # Initialize StringVar variables
+        self.voice_engine_var = tk.StringVar(value=self.voice_engine)
+        self.language_var = tk.StringVar(value=self.language)
+        self.voice_var = tk.StringVar(value=self.voice)
+        self.chatbox_ip_var = tk.StringVar(value=self.chatbox_ip)
+        self.chatbox_port_var = tk.StringVar(value=str(self.chatbox_port))
+        
+        # Initialize dictionaries
+        self.edge_voice_dict = {}
+        self.aws_polly_voice_dict = {}
+        
+        # Initialize spellchecker
+        self.initialize_spellchecker()
 
-        # Initialize spellchecker with correct path
+    def initialize_spellchecker(self):
+        """Initialize the spellchecker with basic dictionary"""
+        logging.debug("Initializing spellchecker...")
         try:
             if getattr(sys, 'frozen', False):
                 base_path = sys._MEIPASS
@@ -65,147 +95,60 @@ class UIManager:
 
             dict_path = os.path.join(base_path, 'resources', 'en.json')
             if os.path.exists(dict_path):
-                logging.info(f"Loading dictionary from: {dict_path}")
-                self.spellchecker = SpellChecker(language=None)  # Initialize without language
+                logging.debug(f"Loading dictionary from: {dict_path}")
+                self.spellchecker = SpellChecker(language=None)
                 with open(dict_path, 'r', encoding='utf-8') as f:
                     word_freq = json.load(f)
-                # Load words into the spellchecker
                 self.spellchecker.word_frequency.load_words(word_freq.keys())
             else:
                 logging.warning(f"Dictionary not found at: {dict_path}, creating basic dictionary")
-                self.spellchecker = SpellChecker(language=None)  # Initialize without language
+                self.spellchecker = SpellChecker(language=None)
                 # Create a basic dictionary
                 basic_words = {
                     "the": 1, "be": 1, "to": 1, "of": 1, "and": 1,
                     "a": 1, "in": 1, "that": 1, "have": 1, "i": 1
                 }
                 self.spellchecker.word_frequency.load_words(basic_words)
+                
+            logging.debug("Spellchecker initialized successfully")
+            
         except Exception as e:
             logging.error(f"Failed to initialize spellchecker: {e}")
-            self.spellchecker = SpellChecker(language=None)  # Fallback to empty spellchecker
-            self.spellchecker.word_frequency.load_words({})  # Initialize with empty dictionary
+            self.spellchecker = SpellChecker(language=None)
+            self.spellchecker.word_frequency.load_words({})
 
-        # Initialize settings
-        self.input_device = None
-        self.output_device = None
-        self.chatbox_ip = '127.0.0.1'
-        self.chatbox_port = 9000
-        self.voice_engine = 'edge-tts'
-        self.voice = None
-        self.language = 'en-US'  # Default language
-        self.hotkey = '`'  # Default hotkey
-        # Output options
-        self.output_options = {'Voice Output': True, 'Chatbox Output': True}
-
-        # Initialize StringVar variables for settings
-        self.voice_engine_var = tk.StringVar(value=self.voice_engine)
-        self.language_var = tk.StringVar(value=self.language)
-        self.voice_var = tk.StringVar(value=self.voice)
-
-        # Initialize StringVar variables for chatbox settings
-        self.chatbox_ip_var = tk.StringVar(value=self.chatbox_ip)
-        self.chatbox_port_var = tk.StringVar(value=str(self.chatbox_port))
-
-        # Initialize voice dictionaries
-        self.edge_voice_dict = {}
-        self.aws_polly_voice_dict = {}
-
-        # Flags
-        self.is_typing = False  # Flag to detect typing
-
-        self.load_settings()
-        self.create_widgets()
-
-        # Set up hotkey listener
-        self.setup_hotkey_listener()
-
-        # Bind events to detect typing
+    def setup_bindings(self):
+        """Set up all event bindings"""
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.bind_all('<KeyPress>', self.on_key_press)
         self.root.bind_all('<KeyRelease>', self.on_key_release)
-
-    def show_splash_screen(self):
-        """Shows a splash screen that fades away after 3 seconds."""
-        splash = tk.Tk()
-        splash.overrideredirect(True)  # Remove window decorations
-        
-        try:
-            if getattr(sys, 'frozen', False):
-                base_path = sys._MEIPASS
-            else:
-                base_path = os.path.dirname(os.path.dirname(__file__))
-            
-            logo_path = os.path.join(base_path, 'resources', 'VisVoiceLogo.jpeg')
-            if os.path.exists(logo_path):
-                # Load and display the image
-                image = Image.open(logo_path)
-                # You can adjust the size if needed
-                # image = image.resize((400, 300), Image.Resampling.LANCZOS)
-                photo = ImageTk.PhotoImage(image)
-                
-                # Create canvas for fade effect
-                canvas = tk.Canvas(splash, width=image.width, height=image.height, highlightthickness=0)
-                canvas.pack()
-                canvas.create_image(0, 0, anchor='nw', image=photo)
-                
-                # Center the splash screen
-                screen_width = splash.winfo_screenwidth()
-                screen_height = splash.winfo_screenheight()
-                position_x = int((screen_width - image.width) / 2)
-                position_y = int((screen_height - image.height) / 2)
-                splash.geometry(f"+{position_x}+{position_y}")
-                
-                splash.update()
-                
-                # Fade effect
-                alpha = 1.0
-                step = 0.1
-                fade_time = 3000  # 3 seconds
-                steps = int(fade_time / 100)  # 10ms per step
-                
-                def fade_out():
-                    nonlocal alpha
-                    if alpha > 0:
-                        alpha -= step
-                        splash.attributes('-alpha', max(alpha, 0))
-                        splash.after(int(fade_time/steps), fade_out)
-                    else:
-                        splash.destroy()
-                
-                # Start fade out after 2 seconds
-                splash.after(2000, fade_out)
-                splash.mainloop()
-                
-        except Exception as e:
-            logging.error(f"Failed to show splash screen: {e}")
-            if splash:
-                splash.destroy()
+        self.setup_hotkey_listener()
 
     def load_settings(self):
-        """Loads settings from settings.ini or sets defaults."""
+        """Loads settings from config.ini"""
         config = configparser.ConfigParser()
-        config.read('settings.ini')
+        config.read('config.ini')
+        
+        if 'Settings' not in config:
+            self.save_settings_to_file()  # Create with defaults
+            config.read('config.ini')
 
-        if 'Settings' in config:
-            settings = config['Settings']
-            self.input_device = settings.get('input_device', self.get_default_input_device())
-            self.output_device = settings.get('output_device', self.get_default_output_device())
-            self.chatbox_ip = settings.get('chatbox_ip', '127.0.0.1')
-            self.chatbox_port = settings.getint('chatbox_port', 9000)
-            self.voice_engine = settings.get('voice_engine', 'edge-tts')
-            self.voice = settings.get('voice', None)
-            self.language = settings.get('language', 'en-US')
-            self.hotkey = settings.get('hotkey', '`')
+        settings = config['Settings']
+        self.input_device = settings.get('input_device', self.get_default_input_device())
+        self.output_device = settings.get('output_device', self.get_default_output_device())
+        self.chatbox_ip = settings.get('chatbox_ip', '127.0.0.1')
+        self.chatbox_port = settings.getint('chatbox_port', 9000)
+        self.voice_engine = settings.get('voice_engine', 'edge-tts')
+        self.voice = settings.get('voice', None)
+        self.language = settings.get('language', 'en-US')
+        self.hotkey = settings.get('hotkey', '`')
 
-            # Output options
-            self.output_options['Voice Output'] = settings.getboolean('voice_output', True)
-            self.output_options['Chatbox Output'] = settings.getboolean('chatbox_output', True)
-        else:
-            # Set defaults
-            self.input_device = self.get_default_input_device()
-            self.output_device = self.get_default_output_device()
+        # Output options
+        self.output_options['Voice Output'] = settings.getboolean('voice_output', True)
+        self.output_options['Chatbox Output'] = settings.getboolean('chatbox_output', True)
 
     def save_settings_to_file(self):
-        """Saves settings to settings.ini."""
+        """Saves settings to config.ini"""
         config = configparser.ConfigParser()
         config['Settings'] = {
             'input_device': self.input_device,
@@ -219,7 +162,7 @@ class UIManager:
             'voice_output': str(self.output_options['Voice Output']),
             'chatbox_output': str(self.output_options['Chatbox Output']),
         }
-        with open('settings.ini', 'w') as configfile:
+        with open('config.ini', 'w') as configfile:
             config.write(configfile)
 
     def get_default_input_device(self):
@@ -236,255 +179,125 @@ class UIManager:
         device_info = sd.query_devices(index)
         return f"{device_info['name']} ({index})"
 
-    def create_widgets(self):
-        """Creates the main UI."""
-        # Display section at the top
-        display_frame = ttk.Frame(self.root)
-        display_frame.pack(side='top', fill='x', padx=10, pady=5)
-
-        # Use labels to display settings in a structured way
-        settings_label = ttk.Label(display_frame, text="Current Settings:", font=('Arial', 10, 'bold'))
-        settings_label.pack(side='top', anchor='w')
-
-        self.current_settings_label = ttk.Label(display_frame, text=self.get_current_settings_text(), justify='left')
-        self.current_settings_label.pack(side='left', anchor='w')
-
-        settings_button = ttk.Button(display_frame, text='Settings', command=self.show_settings)
-        settings_button.pack(side='right')
-
-        # Separator
-        separator = ttk.Separator(self.root, orient='horizontal')
-        separator.pack(fill='x', padx=10, pady=5)
-
-        # Textbox for typing and STT output
-        text_frame = ttk.Frame(self.root)
+    def create_main_tab(self):
+        """Creates the main UI tab with text input and controls"""
+        # Text input area
+        text_frame = ttk.Frame(self.main_tab)
         text_frame.pack(expand=True, fill='both', padx=10, pady=5)
 
-        self.textbox = tk.Text(text_frame, wrap='word', height=10, width=80)
+        self.textbox = tk.Text(text_frame, wrap='word', height=10,
+                              bg=self.dark_bg, fg=self.dark_fg,
+                              insertbackground=self.dark_fg)
         self.textbox.pack(side='left', expand=True, fill='both')
-        self.textbox.bind('<KeyRelease>', self.check_spelling)
+        
+        # Only bind right-click for spell check suggestions
         self.textbox.bind('<Button-3>', self.show_suggestions)
         self.textbox.bind('<Return>', self.submit_text)
-        # Add vertical scrollbar
+        
         scrollbar = ttk.Scrollbar(text_frame, command=self.textbox.yview)
         scrollbar.pack(side='right', fill='y')
         self.textbox.config(yscrollcommand=scrollbar.set)
 
-        # Buttons at the bottom
-        button_frame = ttk.Frame(self.root)
-        button_frame.pack(side='bottom', fill='x', pady=10)
-        # Center the buttons
-        button_frame.columnconfigure(0, weight=1)
-        button_frame.columnconfigure(1, weight=1)
-        button_frame.columnconfigure(2, weight=1)
-        button_frame.columnconfigure(3, weight=1)
+        # Control buttons
+        control_frame = ttk.Frame(self.main_tab)
+        control_frame.pack(side='bottom', fill='x', pady=10)
+        
+        self.toggle_voice_button = ttk.Button(
+            control_frame, text='Start Voice Capture',
+            command=self.toggle_voice_capture)
+        self.toggle_voice_button.pack(side='left', padx=5)
+        
+        ttk.Button(control_frame, text='Send', 
+                  command=self.submit_text).pack(side='right', padx=5)
+        
+        ttk.Button(control_frame, text='Stop Audio',
+                  command=self.stop_audio).pack(side='right', padx=5)
 
-        cancel_button = ttk.Button(button_frame, text='Cancel', command=self.cancel_text)
-        cancel_button.grid(row=0, column=0, sticky='e')
+    def create_settings_tab(self):
+        """Creates the settings tab with accordion sections"""
+        # Create accordion style frames
+        device_frame = self.create_accordion_section(
+            self.settings_tab, "Audio Devices", 0)
+        voice_frame = self.create_accordion_section(
+            self.settings_tab, "Voice Settings", 1)
+        output_frame = self.create_accordion_section(
+            self.settings_tab, "Output Settings", 2)
 
-        send_button = ttk.Button(button_frame, text='Send', command=self.submit_text)
-        send_button.grid(row=0, column=1)
+        # Add settings controls to each section
+        self.create_device_settings(device_frame)
+        self.create_voice_settings(voice_frame)
+        self.create_output_settings(output_frame)
 
-        # Toggle Voice Capture Button
-        self.toggle_voice_button = ttk.Button(button_frame, text='Start Voice Capture', command=self.toggle_voice_capture)
-        self.toggle_voice_button.grid(row=0, column=2, sticky='w')
+    def create_accordion_section(self, parent, title, row):
+        """Creates an accordion section in the settings tab"""
+        frame = ttk.Frame(parent)
+        frame.grid(row=row, column=0, sticky='ew', padx=10, pady=5)
+        label = ttk.Label(frame, text=title, style='TLabel')
+        label.pack(side='top', fill='x')
+        return frame
 
-        # Stop Audio Button
-        stop_audio_button = ttk.Button(button_frame, text='Stop Audio', command=self.stop_audio)
-        stop_audio_button.grid(row=0, column=3, sticky='w')
-
-    def get_current_settings_text(self):
-        """Returns a string representing the current settings in the correct order."""
-        output_methods = ', '.join([key for key, value in self.output_options.items() if value])
-        settings_text = (
-            f"Input Device: {self.input_device}\n"
-            f"Output Device: {self.output_device}\n"
-            f"Engine: {self.voice_engine}\n"
-            f"Language: {self.language}\n"
-            f"Voice: {self.voice}\n"
-            f"Hotkey: {self.hotkey}\n"
-            f"Output Methods: {output_methods}\n"
-            f"IP: {self.chatbox_ip}, Port: {self.chatbox_port}"
-        )
-        return settings_text
-
-    def update_current_settings_label(self):
-        """Updates the current settings label."""
-        self.current_settings_label.config(text=self.get_current_settings_text())
-
-    def check_spelling(self, event=None):
-        """Checks the spelling of the text in the textbox."""
-        if self.spellchecker is None:
-            return
-            
-        self.textbox.tag_remove("misspelled", "1.0", tk.END)
-        text = self.textbox.get("1.0", tk.END)
-        words = re.finditer(r'\b\w+\b', text)
-        for word_match in words:
-            word = word_match.group()
-            if word.lower() in self.spellchecker:
-                continue
-            start_idx = f"1.0+{word_match.start()}c"
-            end_idx = f"1.0+{word_match.end()}c"
-            self.textbox.tag_add("misspelled", start_idx, end_idx)
-        self.textbox.tag_config("misspelled", foreground="red")
-
-    def show_suggestions(self, event):
-        """Shows spelling suggestions for the misspelled word."""
-        try:
-            index = self.textbox.index(f"@{event.x},{event.y}")
-            # Get the start and end indices of the word
-            word_start = self.textbox.index(f"{index} wordstart")
-            word_end = self.textbox.index(f"{index} wordend")
-            word = self.textbox.get(word_start, word_end).strip()
-            if not word:
-                return
-            if word.lower() in self.spellchecker:
-                return
-            suggestions = self.spellchecker.suggest(word.lower())
-            if suggestions:
-                menu = tk.Menu(self.root, tearoff=0)
-                for suggestion in suggestions[:10]:  # Limit to first 10 suggestions
-                    menu.add_command(
-                        label=suggestion,
-                        command=lambda s=suggestion, start=word_start, end=word_end: self.replace_word(start, end, s)
-                    )
-                menu.post(event.x_root, event.y_root)
-            else:
-                messagebox.showinfo("No Suggestions", "No spelling suggestions available.")
-        except Exception as e:
-            logging.error(f"Error showing suggestions: {e}")
-
-    def replace_word(self, start, end, replacement):
-        """Replaces the misspelled word with the selected suggestion."""
-        self.textbox.delete(start, end)
-        self.textbox.insert(start, replacement)
-        # Recheck the spelling
-        self.check_spelling()
-
-    def submit_text(self, event=None):
-        """Handles the 'Send' button click or Enter key press."""
-        text = self.textbox.get("1.0", tk.END).strip()
-        if text:
-            self.controller.process_text(text)
-            self.textbox.delete("1.0", tk.END)
-            logging.info(f'Text submitted: {text}')
-        else:
-            logging.warning('No text entered.')
-        return 'break'  # Prevent default behavior of adding a newline
-
-    def cancel_text(self):
-        """Handles the 'Cancel' button click."""
-        self.textbox.delete("1.0", tk.END)
-        logging.info('Text input canceled.')
-
-    def toggle_voice_capture(self):
-        """Toggles the voice capture on and off."""
-        self.controller.toggle_voice_capture()
-
-    def update_voice_capture_button(self, active):
-        """Updates the voice capture button's text."""
-        if active:
-            self.toggle_voice_button.config(text='Stop Voice Capture')
-        else:
-            self.toggle_voice_button.config(text='Start Voice Capture')
-
-    def setup_hotkey_listener(self):
-        """Sets up the hotkey listener for toggling voice capture."""
-        try:
-            keyboard.add_hotkey(self.hotkey, self.toggle_voice_capture)
-            logging.info(f'Hotkey "{self.hotkey}" registered for toggling voice capture.')
-        except Exception as e:
-            logging.error(f'Error setting up hotkey: {e}')
-
-    def on_key_press(self, event):
-        self.controller.set_typing(True)
-
-    def on_key_release(self, event):
-        self.controller.set_typing(False)
-
-    def insert_text(self, text):
-        """Inserts text into the textbox."""
-        self.textbox.insert(tk.END, text)
-
-    def show_settings(self):
-        """Displays the settings window in the correct order."""
-        self.settings_window = tk.Toplevel(self.root)
-        self.settings_window.title("Settings")
+    def create_device_settings(self, frame):
+        """Creates the audio device settings controls"""
         row = 0
-
-        # Create all BooleanVar variables at initialization
-        self.voice_output_var = tk.BooleanVar(value=self.output_options['Voice Output'])
-        self.chatbox_output_var = tk.BooleanVar(value=self.output_options['Chatbox Output'])
-
-        # Input Device
-        ttk.Label(self.settings_window, text='Input Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        ttk.Label(frame, text='Input Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         input_devices = self.get_audio_devices(input=True)
         self.input_device_var = tk.StringVar(value=self.input_device)
-        ttk.Combobox(self.settings_window, textvariable=self.input_device_var, values=input_devices, width=50).grid(
+        ttk.Combobox(frame, textvariable=self.input_device_var, values=input_devices, width=50).grid(
             row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
-        # Output Device
-        ttk.Label(self.settings_window, text='Output Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        ttk.Label(frame, text='Output Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         output_devices = self.get_audio_devices(output=True)
         self.output_device_var = tk.StringVar(value=self.output_device)
-        ttk.Combobox(self.settings_window, textvariable=self.output_device_var, values=output_devices, width=50).grid(
+        ttk.Combobox(frame, textvariable=self.output_device_var, values=output_devices, width=50).grid(
             row=row, column=1, padx=5, pady=5, sticky='W')
-        row += 1
 
-        # Engine
-        ttk.Label(self.settings_window, text='Engine:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+    def create_voice_settings(self, frame):
+        """Creates the voice settings controls"""
+        row = 0
+        ttk.Label(frame, text='Engine:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         voice_engines = ['edge-tts', 'aws-polly']
-        ttk.Combobox(self.settings_window, textvariable=self.voice_engine_var, values=voice_engines, state='readonly', width=50).grid(
+        ttk.Combobox(frame, textvariable=self.voice_engine_var, values=voice_engines, state='readonly', width=50).grid(
             row=row, column=1, padx=5, pady=5, sticky='W')
         self.voice_engine_var.trace('w', self.update_voice_options)
         row += 1
 
-        # Language
-        ttk.Label(self.settings_window, text='Language:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        ttk.Label(frame, text='Language:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         languages = self.get_available_languages()
-        language_combobox = ttk.Combobox(self.settings_window, textvariable=self.language_var, values=languages, state='readonly', width=50)
+        language_combobox = ttk.Combobox(frame, textvariable=self.language_var, values=languages, state='readonly', width=50)
         language_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
         self.language_var.trace('w', self.update_voice_options)  # Add this trace
         row += 1
 
-        # Voice
-        ttk.Label(self.settings_window, text='Voice:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
-        self.voice_combobox = ttk.Combobox(self.settings_window, textvariable=self.voice_var, state='readonly', width=50)
+        ttk.Label(frame, text='Voice:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        self.voice_combobox = ttk.Combobox(frame, textvariable=self.voice_var, state='readonly', width=50)
         self.voice_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
         self.update_voice_options()
-        row += 1
 
-        # Hotkey
-        ttk.Label(self.settings_window, text='Hotkey:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+    def create_output_settings(self, frame):
+        """Creates the output settings controls"""
+        row = 0
+        ttk.Label(frame, text='Hotkey:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
         self.hotkey_var = tk.StringVar(value=self.hotkey)
-        hotkey_entry = ttk.Entry(self.settings_window, textvariable=self.hotkey_var, width=50)
+        hotkey_entry = ttk.Entry(frame, textvariable=self.hotkey_var, width=50)
         hotkey_entry.grid(row=row, column=1, padx=5, pady=5, sticky='W')
         row += 1
 
-        # Output Methods Frame
-        ttk.Label(self.settings_window, text='Output Methods:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
-        methods_frame = ttk.Frame(self.settings_window)
+        ttk.Label(frame, text='Output Methods:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        methods_frame = ttk.Frame(frame)
         methods_frame.grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        self.voice_output_var = tk.BooleanVar(value=self.output_options['Voice Output'])
+        self.chatbox_output_var = tk.BooleanVar(value=self.output_options['Chatbox Output'])
         ttk.Checkbutton(methods_frame, text='Voice Output', variable=self.voice_output_var).pack(side='left', padx=5)
         ttk.Checkbutton(methods_frame, text='Chatbox Output', variable=self.chatbox_output_var).pack(side='left', padx=5)
         row += 1
 
-        # IP and Port
-        ttk.Label(self.settings_window, text='IP and Port:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
-        ip_port_frame = ttk.Frame(self.settings_window)
+        ttk.Label(frame, text='IP and Port:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        ip_port_frame = ttk.Frame(frame)
         ip_port_frame.grid(row=row, column=1, padx=5, pady=5, sticky='W')
         ttk.Entry(ip_port_frame, textvariable=self.chatbox_ip_var, width=20).pack(side='left')
         ttk.Label(ip_port_frame, text=':').pack(side='left', padx=2)
         ttk.Entry(ip_port_frame, textvariable=self.chatbox_port_var, width=10).pack(side='left')
-        row += 1
-
-        # Save and Cancel buttons
-        button_frame = ttk.Frame(self.settings_window)
-        button_frame.grid(row=row, column=0, columnspan=2, pady=10)
-        ttk.Button(button_frame, text='Save', command=self.save_settings).pack(side='left', padx=5)
-        ttk.Button(button_frame, text='Cancel', command=self.settings_window.destroy).pack(side='left', padx=5)
 
     def save_settings(self):
         """Saves the settings from the settings window."""
@@ -646,5 +459,214 @@ class UIManager:
 
     def run(self):
         """Runs the main loop of the UI."""
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.root.mainloop()
+        logging.debug("Starting UI main loop")
+        try:
+            self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+            self.root.mainloop()
+        except Exception as e:
+            logging.error("Error in UI main loop: %s", e, exc_info=True)
+            raise
+
+    def get_current_settings_text(self):
+        """Returns a string representing the current settings in the correct order."""
+        output_methods = ', '.join([key for key, value in self.output_options.items() if value])
+        settings_text = (
+            f"Input Device: {self.input_device}\n"
+            f"Output Device: {self.output_device}\n"
+            f"Engine: {self.voice_engine}\n"
+            f"Language: {self.language}\n"
+            f"Voice: {self.voice}\n"
+            f"Hotkey: {self.hotkey}\n"
+            f"Output Methods: {output_methods}\n"
+            f"IP: {self.chatbox_ip}, Port: {self.chatbox_port}"
+        )
+        return settings_text
+
+    def update_current_settings_label(self):
+        """Updates the current settings label."""
+        self.current_settings_label.config(text=self.get_current_settings_text())
+
+    def check_spelling(self, event=None):
+        """Checks the spelling of the text in the textbox."""
+        if self.spellchecker is None:
+            return
+            
+        self.textbox.tag_remove("misspelled", "1.0", tk.END)
+        text = self.textbox.get("1.0", tk.END)
+        words = re.finditer(r'\b\w+\b', text)
+        for word_match in words:
+            word = word_match.group()
+            if word.lower() in self.spellchecker:
+                continue
+            start_idx = f"1.0+{word_match.start()}c"
+            end_idx = f"1.0+{word_match.end()}c"
+            self.textbox.tag_add("misspelled", start_idx, end_idx)
+        self.textbox.tag_config("misspelled", foreground="red")
+
+    def show_suggestions(self, event):
+        """Shows spelling suggestions for the misspelled word."""
+        try:
+            index = self.textbox.index(f"@{event.x},{event.y}")
+            # Get the start and end indices of the word
+            word_start = self.textbox.index(f"{index} wordstart")
+            word_end = self.textbox.index(f"{index} wordend")
+            word = self.textbox.get(word_start, word_end).strip()
+            if not word:
+                return
+            if word.lower() in self.spellchecker:
+                return
+            suggestions = self.spellchecker.suggest(word.lower())
+            if suggestions:
+                menu = tk.Menu(self.root, tearoff=0)
+                for suggestion in suggestions[:10]:  # Limit to first 10 suggestions
+                    menu.add_command(
+                        label=suggestion,
+                        command=lambda s=suggestion, start=word_start, end=word_end: self.replace_word(start, end, s)
+                    )
+                menu.post(event.x_root, event.y_root)
+            else:
+                messagebox.showinfo("No Suggestions", "No spelling suggestions available.")
+        except Exception as e:
+            logging.error(f"Error showing suggestions: {e}")
+
+    def replace_word(self, start, end, replacement):
+        """Replaces the misspelled word with the selected suggestion."""
+        self.textbox.delete(start, end)
+        self.textbox.insert(start, replacement)
+        # Recheck the spelling
+        self.check_spelling()
+
+    def submit_text(self, event=None):
+        """Handles the 'Send' button click or Enter key press."""
+        text = self.textbox.get("1.0", tk.END).strip()
+        if text:
+            self.controller.process_text(text)
+            self.textbox.delete("1.0", tk.END)
+            logging.info(f'Text submitted: {text}')
+        else:
+            logging.warning('No text entered.')
+        return 'break'  # Prevent default behavior of adding a newline
+
+    def cancel_text(self):
+        """Handles the 'Cancel' button click."""
+        self.textbox.delete("1.0", tk.END)
+        logging.info('Text input canceled.')
+
+    def toggle_voice_capture(self):
+        """Toggles the voice capture on and off."""
+        self.controller.toggle_voice_capture()
+
+    def update_voice_capture_button(self, active):
+        """Updates the voice capture button's text."""
+        if active:
+            self.toggle_voice_button.config(text='Stop Voice Capture')
+        else:
+            self.toggle_voice_button.config(text='Start Voice Capture')
+
+    def setup_hotkey_listener(self):
+        """Sets up the hotkey listener for toggling voice capture."""
+        try:
+            keyboard.add_hotkey(self.hotkey, self.toggle_voice_capture)
+            logging.info(f'Hotkey "{self.hotkey}" registered for toggling voice capture.')
+        except Exception as e:
+            logging.error(f'Error setting up hotkey: {e}')
+
+    def on_key_press(self, event):
+        self.controller.set_typing(True)
+
+    def on_key_release(self, event):
+        self.controller.set_typing(False)
+
+    def insert_text(self, text):
+        """Inserts text into the textbox."""
+        self.textbox.insert(tk.END, text)
+
+    def show_settings(self):
+        """Displays the settings window in the correct order."""
+        self.settings_window = tk.Toplevel(self.root)
+        self.settings_window.title("Settings")
+        self.settings_window.configure(bg=self.dark_bg)
+        
+        row = 0
+
+        # Create all BooleanVar variables at initialization
+        self.voice_output_var = tk.BooleanVar(value=self.output_options['Voice Output'])
+        self.chatbox_output_var = tk.BooleanVar(value=self.output_options['Chatbox Output'])
+
+        # Input Device
+        ttk.Label(self.settings_window, text='Input Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        input_devices = self.get_audio_devices(input=True)
+        self.input_device_var = tk.StringVar(value=self.input_device)
+        ttk.Combobox(self.settings_window, textvariable=self.input_device_var, values=input_devices, width=50).grid(
+            row=row, column=1, padx=5, pady=5, sticky='W')
+        row += 1
+
+        # Output Device
+        ttk.Label(self.settings_window, text='Output Device:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        output_devices = self.get_audio_devices(output=True)
+        self.output_device_var = tk.StringVar(value=self.output_device)
+        ttk.Combobox(self.settings_window, textvariable=self.output_device_var, values=output_devices, width=50).grid(
+            row=row, column=1, padx=5, pady=5, sticky='W')
+        row += 1
+
+        # Engine
+        ttk.Label(self.settings_window, text='Engine:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        voice_engines = ['edge-tts', 'aws-polly']
+        ttk.Combobox(self.settings_window, textvariable=self.voice_engine_var, values=voice_engines, state='readonly', width=50).grid(
+            row=row, column=1, padx=5, pady=5, sticky='W')
+        self.voice_engine_var.trace('w', self.update_voice_options)
+        row += 1
+
+        # Language
+        ttk.Label(self.settings_window, text='Language:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        languages = self.get_available_languages()
+        language_combobox = ttk.Combobox(self.settings_window, textvariable=self.language_var, values=languages, state='readonly', width=50)
+        language_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        self.language_var.trace('w', self.update_voice_options)  # Add this trace
+        row += 1
+
+        # Voice
+        ttk.Label(self.settings_window, text='Voice:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        self.voice_combobox = ttk.Combobox(self.settings_window, textvariable=self.voice_var, state='readonly', width=50)
+        self.voice_combobox.grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        self.update_voice_options()
+        row += 1
+
+        # Hotkey
+        ttk.Label(self.settings_window, text='Hotkey:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        self.hotkey_var = tk.StringVar(value=self.hotkey)
+        hotkey_entry = ttk.Entry(self.settings_window, textvariable=self.hotkey_var, width=50)
+        hotkey_entry.grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        row += 1
+
+        # Output Methods Frame
+        ttk.Label(self.settings_window, text='Output Methods:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        methods_frame = ttk.Frame(self.settings_window)
+        methods_frame.grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Checkbutton(methods_frame, text='Voice Output', variable=self.voice_output_var).pack(side='left', padx=5)
+        ttk.Checkbutton(methods_frame, text='Chatbox Output', variable=self.chatbox_output_var).pack(side='left', padx=5)
+        row += 1
+
+        # IP and Port
+        ttk.Label(self.settings_window, text='IP and Port:').grid(row=row, column=0, padx=5, pady=5, sticky='E')
+        ip_port_frame = ttk.Frame(self.settings_window)
+        ip_port_frame.grid(row=row, column=1, padx=5, pady=5, sticky='W')
+        ttk.Entry(ip_port_frame, textvariable=self.chatbox_ip_var, width=20).pack(side='left')
+        ttk.Label(ip_port_frame, text=':').pack(side='left', padx=2)
+        ttk.Entry(ip_port_frame, textvariable=self.chatbox_port_var, width=10).pack(side='left')
+        row += 1
+
+        # Save and Cancel buttons
+        button_frame = ttk.Frame(self.settings_window)
+        button_frame.grid(row=row, column=0, columnspan=2, pady=10)
+        ttk.Button(button_frame, text='Save', command=self.save_settings).pack(side='left', padx=5)
+        ttk.Button(button_frame, text='Cancel', command=self.settings_window.destroy).pack(side='left', padx=5)
+
+        # Apply dark theme to settings window
+        for child in self.settings_window.winfo_children():
+            if isinstance(child, ttk.Frame):
+                child.configure(style='TFrame')
+            elif isinstance(child, ttk.Label):
+                child.configure(style='TLabel')
+            elif isinstance(child, ttk.Button):
+                child.configure(style='TButton')
